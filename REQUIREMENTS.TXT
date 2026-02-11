@@ -1,4 +1,7 @@
+# Убедитесь что requirements.txt содержит ТОЧНО эти строки
+cat > requirements.txt << 'EOF'
 python-telegram-bot==20.7
 apscheduler==3.10.4
 python-dotenv==1.0.0
 requests==2.31.0
+EOF
