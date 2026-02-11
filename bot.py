@@ -18,10 +18,7 @@ from telegram.ext import (
 )
 
 # Импортируем менеджеры базы данных
-from database import (
-    PostgresDB, UserManager, TaskManager, AdminManager, 
-    PendingLinksManager, TrackingLinksManager
-)
+from database import PostgresDB, UserManager, TaskManager, AdminManager, PendingLinksManager, TrackingLinksManager
 
 # ========== КОНФИГУРАЦИЯ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8346231905:AAHHG3of6aAV69uYwF3e3onUjKuA0zIcZn4')
@@ -1041,5 +1038,3 @@ async def main():
         # Закрываем соединение с базой данных
         await PostgresDB.close_pool()
 
-if __name__ == '__main__':
-    asyncio.run(main())
