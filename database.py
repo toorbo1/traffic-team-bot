@@ -122,7 +122,30 @@ class PostgresDB:
             ''')
             
             print("✅ Таблицы PostgreSQL созданы/проверены")
-
+class PostgresDB:
+    """Класс для работы с PostgreSQL"""
+    
+    _pool = None
+    
+    @classmethod
+    async def init_pool(cls):
+        """Инициализация пула соединений"""
+        if not cls._pool:
+            if not DATABASE_URL:
+                raise ValueError("❌ DATABASE_URL не установлен в переменных окружения!")
+            try:
+                cls._pool = await asyncpg.create_pool(
+                    DATABASE_URL,
+                    min_size=1,
+                    max_size=10,
+                    command_timeout=60
+                )
+                print("✅ Подключение к PostgreSQL установлено")
+            except Exception as e:
+                print(f"❌ Ошибка подключения к PostgreSQL: {e}")
+                raise
+        return cls._pool
+    
 class UserManager:
     @staticmethod
     async def get_or_create_user(user_id: int, username: str = "", first_name: str = ""):

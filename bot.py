@@ -25,7 +25,10 @@ from database import (
 
 # ========== КОНФИГУРАЦИЯ ==========
 # Берем настройки из переменных окружения
-BOT_TOKEN = os.environ.get('BOT_TOKEN', "8346231905:AAHHG3of6aAV69uYwF3e3onUjKuA0zIcZn4")
+BOT_TOKEN = os.environ.get('BOT_TOKEN')  # УБРАЛИ ДЕФОЛТНЫЙ ТОКЕН!
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не установлен в переменных окружения!")
+
 TASK_NOTIFICATION_GROUP = os.environ.get('TASK_NOTIFICATION_GROUP', "@wedferfwewf")
 REPORT_GROUP = os.environ.get('REPORT_GROUP', "@ertghpjoterg")
 
