@@ -1,0 +1,40 @@
+# Создайте .gitignore
+echo "# Файлы конфигурации
+config.py
+*.env
+.env
+.env.local
+
+# Файлы данных
+*.json
+!requirements.json
+!package.json
+
+# Логи
+*.log
+logs/
+bot.log
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Временные файлы
+temp/
+tmp/
+*.tmp
+" > .gitignore
