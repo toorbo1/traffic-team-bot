@@ -18,28 +18,20 @@ from telegram.ext import (
 )
 
 # Импортируем менеджеры базы данных
-from database import PostgresDB, UserManager, TaskManager, AdminManager, PendingLinksManager, TrackingLinksManager
+from database import (
+    PostgresDB, UserManager, TaskManager, AdminManager, 
+    PendingLinksManager, TrackingLinksManager
+)
 
 # ========== КОНФИГУРАЦИЯ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '8346231905:AAHHG3of6aAV69uYwF3e3onUjKuA0zIcZn4')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
 MAIN_ADMIN_ID = int(os.environ.get('MAIN_ADMIN_ID', '8358009538'))
 TASK_NOTIFICATION_GROUP = os.environ.get('TASK_NOTIFICATION_GROUP', '@wedferfwewf')
 REPORT_GROUP = os.environ.get('REPORT_GROUP', '@ertghpjoterg')
 
-# ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Файлы для хранения данных
-USERS_FILE = "users_data.json"
-ADMINS_FILE = "admins_data.json"
-TASKS_FILE = "tasks_data.json"
-USER_TASKS_FILE = "user_tasks.json"
-LINKS_FILE = "tracking_links.json"
-PENDING_LINKS_FILE = "pending_links.json"  # Файл для хранения ожидающих ссылок
+# Проверяем наличие обязательных переменных
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не установлен в переменных окружения!")
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
 logging.basicConfig(
@@ -47,238 +39,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# ========== КЛАССЫ ДЛЯ УПРАВЛЕНИЯ ДАННЫМИ ==========
-class DataManager:
-    """Менеджер для работы с данными"""
-    
-    @staticmethod
-    def load_data(filename: str, default: any = None):
-        """Загрузка данных из файла"""
-        try:
-            with open(filename, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return default if default is not None else {}
-    
-    @staticmethod
-    def save_data(filename: str, data: any):
-        """Сохранение данных в файл"""
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    
-    @staticmethod
-    def generate_tracking_link(user_id: int, task_id: str) -> str:
-        """Генерация уникальной ссылки для отслеживания"""
-        token = secrets.token_urlsafe(16)
-        link_id = hashlib.md5(f"{user_id}_{task_id}_{token}".encode()).hexdigest()[:8]
-        
-        links = DataManager.load_data(LINKS_FILE, {})
-        links[link_id] = {
-            "user_id": user_id,
-            "task_id": task_id,
-            "created": datetime.now().isoformat(),
-            "clicks": 0,
-            "conversions": 0,
-            "active": True,
-            "work_link": None  # Здесь будет рабочая ссылка от админа
-        }
-        DataManager.save_data(LINKS_FILE, links)
-        
-        return f"https://t.me/your_tracking_bot?start={link_id}"
-    
-    @staticmethod
-    def get_user_stats(user_id: int) -> Dict:
-        """Получение статистики пользователя"""
-        user_tasks = DataManager.load_data(USER_TASKS_FILE, {})
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        
-        user_data = user_tasks.get(str(user_id), {})
-        completed = user_data.get("completed_tasks", [])
-        active = user_data.get("active_tasks", [])
-        
-        total_earned = sum(
-            tasks.get(task_id, {}).get("reward", 0) 
-            for task_id in completed
-        )
-        
-        return {
-            "completed_count": len(completed),
-            "active_count": len(active),
-            "total_earned": total_earned,
-            "rating": len(completed) * 10
-        }
-
-class AdminManager:
-    """Менеджер для работы с администраторами"""
-    
-    @staticmethod
-    def is_admin(user_id: int) -> bool:
-        """Проверка, является ли пользователь админом"""
-        if user_id == MAIN_ADMIN_ID:
-            return True
-        
-        admins = DataManager.load_data(ADMINS_FILE, {})
-        return str(user_id) in admins
-    
-    @staticmethod
-    def is_main_admin(user_id: int) -> bool:
-        """Проверка, является ли пользователь главным админом"""
-        return user_id == MAIN_ADMIN_ID
-    
-    @staticmethod
-    def add_admin(user_id: int, username: str = "", added_by: int = MAIN_ADMIN_ID):
-        """Добавление администратора"""
-        admins = DataManager.load_data(ADMINS_FILE, {})
-        admins[str(user_id)] = {
-            "username": username,
-            "added_by": added_by,
-            "added_date": datetime.now().isoformat(),
-            "permissions": ["manage_tasks", "view_stats"]
-        }
-        DataManager.save_data(ADMINS_FILE, admins)
-    
-    @staticmethod
-    def remove_admin(user_id: int):
-        """Удаление администратора"""
-        admins = DataManager.load_data(ADMINS_FILE, {})
-        if str(user_id) in admins:
-            del admins[str(user_id)]
-            DataManager.save_data(ADMINS_FILE, admins)
-            return True
-        return False
-
-class TaskManager:
-    """Менеджер для работы с заданиями"""
-    
-    @staticmethod
-    def create_task(
-        title: str,
-        description: str,
-        task_type: str,
-        target: str,
-        reward: float,
-        created_by: int,
-        requirements: str = ""
-    ) -> str:
-        """Создание нового задания"""
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        
-        task_id = hashlib.md5(f"{title}_{datetime.now()}".encode()).hexdigest()[:8]
-        
-        tasks[task_id] = {
-            "id": task_id,
-            "title": title,
-            "description": description,
-            "type": task_type,
-            "target": target,
-            "reward": reward,
-            "requirements": requirements,
-            "created_by": created_by,
-            "created_date": datetime.now().isoformat(),
-            "active": True,
-            "taken_by": None,
-            "completed": False,
-            "available": True,
-            "work_link": None  # Рабочая ссылка от админа
-        }
-        
-        DataManager.save_data(TASKS_FILE, tasks)
-        return task_id
-    
-    @staticmethod
-    def get_available_tasks() -> List[Dict]:
-        """Получение списка доступных заданий"""
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        return [
-            task for task in tasks.values() 
-            if task.get("available", True) and task.get("active", True) and not task.get("taken_by")
-        ]
-    
-    @staticmethod
-    def get_task(task_id: str) -> Optional[Dict]:
-        """Получение задания по ID"""
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        return tasks.get(task_id)
-    
-    @staticmethod
-    def assign_task(task_id: str, user_id: int) -> bool:
-        """Назначение задания пользователю"""
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        
-        if task_id not in tasks:
-            return False
-        
-        task = tasks[task_id]
-        if task.get("taken_by") or not task.get("available", True):
-            return False
-        
-        task["taken_by"] = user_id
-        task["available"] = False
-        task["assigned_date"] = datetime.now().isoformat()
-        task["work_link"] = None  # Сброс рабочей ссылки
-        
-        user_tasks = DataManager.load_data(USER_TASKS_FILE, {})
-        user_id_str = str(user_id)
-        
-        if user_id_str not in user_tasks:
-            user_tasks[user_id_str] = {
-                "active_tasks": [],
-                "completed_tasks": [],
-                "earned": 0,
-                "joined_date": datetime.now().isoformat()
-            }
-        
-        user_tasks[user_id_str]["active_tasks"].append(task_id)
-        
-        DataManager.save_data(TASKS_FILE, tasks)
-        DataManager.save_data(USER_TASKS_FILE, user_tasks)
-        
-        return True
-    
-    @staticmethod
-    def set_work_link(task_id: str, link: str) -> bool:
-        """Установка рабочей ссылки для задания"""
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        
-        if task_id not in tasks:
-            return False
-        
-        tasks[task_id]["work_link"] = link
-        DataManager.save_data(TASKS_FILE, tasks)
-        return True
-    
-    @staticmethod
-    def complete_task(task_id: str, user_id: int, proof: str = "") -> bool:
-        """Завершение задания"""
-        tasks = DataManager.load_data(TASKS_FILE, {})
-        user_tasks = DataManager.load_data(USER_TASKS_FILE, {})
-        
-        if task_id not in tasks:
-            return False
-        
-        task = tasks[task_id]
-        user_id_str = str(user_id)
-        
-        if task.get("taken_by") != user_id:
-            return False
-        
-        task["completed"] = True
-        task["completed_date"] = datetime.now().isoformat()
-        task["proof"] = proof
-        task["active"] = False
-        
-        if user_id_str in user_tasks:
-            if task_id in user_tasks[user_id_str]["active_tasks"]:
-                user_tasks[user_id_str]["active_tasks"].remove(task_id)
-            
-            user_tasks[user_id_str]["completed_tasks"].append(task_id)
-            user_tasks[user_id_str]["earned"] = user_tasks[user_id_str].get("earned", 0) + task.get("reward", 0)
-        
-        DataManager.save_data(TASKS_FILE, tasks)
-        DataManager.save_data(USER_TASKS_FILE, user_tasks)
-        
-        return True
 
 # ========== ОСНОВНЫЕ ФУНКЦИИ БОТА ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -296,7 +56,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link_id = context.args[0]
         await handle_tracking_link(update, context, link_id)
         return
-
     
     welcome_text = (
         "🚀 *Приветствуем, будущий трафик-менеджер!*\n\n"
@@ -319,7 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❓ Помощь", callback_data="help")]
     ]
     
-    if AdminManager.is_admin(user.id):
+    if await AdminManager.is_admin(user.id):
         keyboard.append([InlineKeyboardButton("👑 Админ панель", callback_data="admin_panel")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -335,7 +94,7 @@ async def handle_tracking_link(update: Update, context: ContextTypes.DEFAULT_TYP
     link_data = await TrackingLinksManager.get_link(link_id)
     
     if not link_data:
-        await update.message.reply_text("Ссылка не найдена или устарела.")
+        await update.message.reply_text("❌ Ссылка не найдена или устарела.")
         return
     
     # Увеличиваем счетчик кликов
@@ -354,7 +113,6 @@ async def handle_tracking_link(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         await update.message.reply_text("🎯 Отслеживание включено!")
 
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ССЫЛКАМИ В ГРУППЕ ==========
 async def send_task_notification(context: ContextTypes.DEFAULT_TYPE, user, task, tracking_link):
     """Отправка уведомления в группу с кнопкой"""
     notification_text = (
@@ -398,7 +156,7 @@ async def handle_give_link_callback(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     
     # Проверяем, что нажавший - администратор
-    if not AdminManager.is_admin(query.from_user.id):
+    if not await AdminManager.is_admin(query.from_user.id):
         await query.answer("❌ Только администратор может выдавать ссылки!", show_alert=True)
         return
     
@@ -408,7 +166,7 @@ async def handle_give_link_callback(update: Update, context: ContextTypes.DEFAUL
     user_id = int(user_id)
     
     # Получаем информацию о задании
-    task = TaskManager.get_task(task_id)
+    task = await TaskManager.get_task(task_id)
     if not task:
         await query.answer("❌ Задание не найдено!", show_alert=True)
         return
@@ -436,7 +194,7 @@ async def handle_work_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # Проверяем, что это админ и ожидает ввод ссылки
-    if not AdminManager.is_admin(user_id):
+    if not await AdminManager.is_admin(user_id):
         return
     
     if "waiting_for_link" not in context.user_data:
@@ -446,10 +204,10 @@ async def handle_work_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     work_link = update.message.text
     
     # Сохраняем ссылку в задании
-    TaskManager.set_work_link(link_data["task_id"], work_link)
+    await TaskManager.set_work_link(link_data["task_id"], work_link)
     
     # Получаем информацию о задании
-    task = TaskManager.get_task(link_data["task_id"])
+    task = await TaskManager.get_task(link_data["task_id"])
     
     # Отправляем ссылку исполнителю
     try:
@@ -473,11 +231,7 @@ async def handle_work_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Удаляем ожидающий статус
-        pending = DataManager.load_data(PENDING_LINKS_FILE, {})
-        if link_data["task_id"] in pending:
-            del pending[link_data["task_id"]]
-            DataManager.save_data(PENDING_LINKS_FILE, pending)
-        
+        await PendingLinksManager.delete_pending(link_data["task_id"])
         del context.user_data["waiting_for_link"]
         
     except Exception as e:
@@ -534,20 +288,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_profile(query, context: ContextTypes.DEFAULT_TYPE):
     """Показать профиль пользователя"""
     user = query.from_user
-    stats = DataManager.get_user_stats(user.id)
+    stats = await UserManager.get_user_stats(user.id)
     
     # Получаем активные задания
-    user_tasks = DataManager.load_data(USER_TASKS_FILE, {})
-    user_data = user_tasks.get(str(user.id), {})
-    active_tasks = user_data.get("active_tasks", [])
-    
-    # Проверяем, есть ли у активных заданий рабочие ссылки
-    tasks = DataManager.load_data(TASKS_FILE, {})
-    has_work_links = False
-    for task_id in active_tasks:
-        if task_id in tasks and tasks[task_id].get("work_link"):
-            has_work_links = True
-            break
+    pool = await PostgresDB.init_pool()
+    async with pool.acquire() as conn:
+        active_tasks = await conn.fetch(
+            'SELECT task_id FROM user_tasks WHERE user_id = $1 AND status = $2',
+            user.id, 'active'
+        )
+        
+        # Проверяем, есть ли у активных заданий рабочие ссылки
+        has_work_links = False
+        for task_record in active_tasks:
+            task = await TaskManager.get_task(task_record['task_id'])
+            if task and task.get('work_link'):
+                has_work_links = True
+                break
     
     profile_text = (
         f"👤 *Ваш профиль*\n\n"
@@ -559,7 +316,7 @@ async def show_profile(query, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Активных заданий: {stats['active_count']}\n"
         f"💰 Заработано всего: {stats['total_earned']} руб.\n"
         f"⭐ Рейтинг: {stats['rating']}/100\n\n"
-        f"*Статус:* {'👑 Администратор' if AdminManager.is_admin(user.id) else '👤 Исполнитель'}"
+        f"*Статус:* {'👑 Администратор' if await AdminManager.is_admin(user.id) else '👤 Исполнитель'}"
     )
     
     if has_work_links:
@@ -572,7 +329,7 @@ async def show_profile(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_available_tasks(query, context: ContextTypes.DEFAULT_TYPE):
     """Показать доступные задания"""
-    tasks = TaskManager.get_available_tasks()
+    tasks = await TaskManager.get_available_tasks()
     
     if not tasks:
         keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
@@ -586,7 +343,7 @@ async def show_available_tasks(query, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for task in tasks[:10]:
         btn_text = f"{task['title']} - {task['reward']} руб."
-        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"view_task_{task['id']}")])
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"view_task_{task['task_id']}")])
     
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -599,10 +356,10 @@ async def show_available_tasks(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def view_task_details(query, context: ContextTypes.DEFAULT_TYPE, task_id: str):
     """Показать детали задания"""
-    task = TaskManager.get_task(task_id)
+    task = await TaskManager.get_task(task_id)
     
     if not task:
-        await query.answer("Задание не найдено!", show_alert=True)
+        await query.answer("❌ Задание не найдено!", show_alert=True)
         return
     
     task_text = (
@@ -628,15 +385,15 @@ async def view_task_details(query, context: ContextTypes.DEFAULT_TYPE, task_id: 
 async def take_task(query, context: ContextTypes.DEFAULT_TYPE, task_id: str):
     """Взять задание"""
     user = query.from_user
-    task = TaskManager.get_task(task_id)
+    task = await TaskManager.get_task(task_id)
     
     if not task:
-        await query.answer("Задание не найдено!", show_alert=True)
+        await query.answer("❌ Задание не найдено!", show_alert=True)
         return
     
-    if TaskManager.assign_task(task_id, user.id):
+    if await TaskManager.assign_task(task_id, user.id):
         # Генерируем отслеживающую ссылку
-        tracking_link = DataManager.generate_tracking_link(user.id, task_id)
+        tracking_link = await TaskManager.generate_tracking_link(user.id, task_id)
         
         # Отправляем уведомление в группу с кнопкой
         await send_task_notification(context, user, task, tracking_link)
@@ -654,12 +411,12 @@ async def take_task(query, context: ContextTypes.DEFAULT_TYPE, task_id: str):
         
         await query.edit_message_text(success_text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        await query.answer("Не удалось взять задание.", show_alert=True)
+        await query.answer("❌ Не удалось взять задание.", show_alert=True)
 
 async def show_my_stats(query, context: ContextTypes.DEFAULT_TYPE):
     """Показать статистику пользователя"""
     user = query.from_user
-    stats = DataManager.get_user_stats(user.id)
+    stats = await UserManager.get_user_stats(user.id)
     
     stats_text = (
         f"📊 *Ваша статистика*\n\n"
@@ -704,7 +461,7 @@ async def back_to_main_menu(query, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❓ Помощь", callback_data="help")]
     ]
     
-    if AdminManager.is_admin(user.id):
+    if await AdminManager.is_admin(user.id):
         keyboard.append([InlineKeyboardButton("👑 Админ панель", callback_data="admin_panel")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -716,11 +473,11 @@ async def show_admin_panel(query, context: ContextTypes.DEFAULT_TYPE):
     """Показать админ-панель"""
     user = query.from_user
     
-    if not AdminManager.is_admin(user.id):
-        await query.answer("Доступ запрещен!", show_alert=True)
+    if not await AdminManager.is_admin(user.id):
+        await query.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
-    is_main = AdminManager.is_main_admin(user.id)
+    is_main = await AdminManager.is_main_admin(user.id)
     
     admin_text = (
         f"👑 *Панель администратора*\n\n"
@@ -743,9 +500,24 @@ async def show_admin_panel(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def manage_admins(query, context: ContextTypes.DEFAULT_TYPE):
     """Управление администраторами"""
-    if not AdminManager.is_main_admin(query.from_user.id):
-        await query.answer("Доступ запрещен!", show_alert=True)
+    if not await AdminManager.is_main_admin(query.from_user.id):
+        await query.answer("❌ Доступ запрещен!", show_alert=True)
         return
+    
+    admins = await AdminManager.get_all_admins()
+    
+    admin_list_text = "👥 *Список администраторов:*\n\n"
+    
+    if admins:
+        for admin in admins:
+            admin_list_text += f"• ID: {admin['user_id']}"
+            if admin.get('username'):
+                admin_list_text += f" (@{admin['username']})"
+            admin_list_text += f"\n  Добавлен: {admin['added_date'].strftime('%d.%m.%Y')}\n\n"
+    else:
+        admin_list_text += "Нет дополнительных администраторов\n\n"
+    
+    admin_list_text += f"• {MAIN_ADMIN_ID} (Главный администратор)\n\n"
     
     keyboard = [
         [InlineKeyboardButton("➕ Добавить админа", callback_data="admin_add_admin")],
@@ -754,22 +526,25 @@ async def manage_admins(query, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
-        "👥 *Управление администраторами*",
+        admin_list_text,
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
 
 async def add_admin_dialog(query, context: ContextTypes.DEFAULT_TYPE):
     """Диалог добавления администратора"""
-    if not AdminManager.is_main_admin(query.from_user.id):
-        await query.answer("Доступ запрещен!", show_alert=True)
+    if not await AdminManager.is_main_admin(query.from_user.id):
+        await query.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
     context.user_data["waiting_for_admin_id"] = True
     
     await query.edit_message_text(
         "👥 *Добавление администратора*\n\n"
-        "Отправьте ID пользователя:",
+        "Отправьте ID пользователя Telegram, которого хотите сделать администратором:\n\n"
+        "Как получить ID:\n"
+        "1. Отправьте @userinfobot любое сообщение\n"
+        "2. Он пришлет ID пользователя",
         parse_mode='Markdown'
     )
 
@@ -777,15 +552,23 @@ async def handle_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ID нового администратора"""
     user_id = update.effective_user.id
     
-    if not AdminManager.is_main_admin(user_id):
+    if not await AdminManager.is_main_admin(user_id):
         return
     
     if not context.user_data.get("waiting_for_admin_id"):
         return
     
     try:
-        target_user_id = int(update.message.text)
-        AdminManager.add_admin(target_user_id, "Новый админ", user_id)
+        target_user_id = int(update.message.text.strip())
+        
+        if target_user_id == MAIN_ADMIN_ID:
+            await update.message.reply_text(
+                "❌ Этот пользователь уже является главным администратором!",
+                parse_mode='Markdown'
+            )
+            return
+        
+        await AdminManager.add_admin(target_user_id, "", user_id)
         
         del context.user_data["waiting_for_admin_id"]
         
@@ -794,35 +577,46 @@ async def handle_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
         
+        # Отправляем уведомление новому админу
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
-                text="🎉 *Вас назначили администратором!*\n\nИспользуйте /start",
+                text="🎉 *Вас назначили администратором!*\n\n"
+                     "Теперь вам доступна админ-панель в боте.\n"
+                     "Используйте /start для начала работы.",
                 parse_mode='Markdown'
             )
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Не удалось отправить уведомление новому админу {target_user_id}: {e}")
+            await update.message.reply_text(
+                "⚠️ Администратор добавлен, но не удалось отправить ему уведомление.\n"
+                "Возможно, пользователь еще не запускал бота.",
+                parse_mode='Markdown'
+            )
             
     except ValueError:
-        await update.message.reply_text("❌ Неверный ID")
+        await update.message.reply_text("❌ Неверный ID. ID должен быть числом.")
 
 async def remove_admin(query, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
     """Удаление администратора"""
-    if not AdminManager.is_main_admin(query.from_user.id):
-        await query.answer("Доступ запрещен!", show_alert=True)
+    if not await AdminManager.is_main_admin(query.from_user.id):
+        await query.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
     if admin_id == MAIN_ADMIN_ID:
-        await query.answer("Нельзя удалить главного админа!", show_alert=True)
+        await query.answer("❌ Нельзя удалить главного админа!", show_alert=True)
         return
     
-    if AdminManager.remove_admin(admin_id):
+    if await AdminManager.remove_admin(admin_id):
         await query.answer("✅ Администратор удален!", show_alert=True)
+        await manage_admins(query, context)
+    else:
+        await query.answer("❌ Администратор не найден!", show_alert=True)
 
 async def create_task_dialog(query, context: ContextTypes.DEFAULT_TYPE):
     """Диалог создания задания"""
-    if not AdminManager.is_admin(query.from_user.id):
-        await query.answer("Доступ запрещен!", show_alert=True)
+    if not await AdminManager.is_admin(query.from_user.id):
+        await query.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
     context.user_data["creating_task"] = {
@@ -841,7 +635,7 @@ async def handle_task_creation(update: Update, context: ContextTypes.DEFAULT_TYP
     """Обработка создания задания"""
     user_id = update.effective_user.id
     
-    if not AdminManager.is_admin(user_id):
+    if not await AdminManager.is_admin(user_id):
         return
     
     if "creating_task" not in context.user_data:
@@ -868,7 +662,9 @@ async def handle_task_creation(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard = [
             [InlineKeyboardButton("👥 Подписчики", callback_data="task_type_subscribers")],
             [InlineKeyboardButton("📢 Реклама", callback_data="task_type_ad")],
-            [InlineKeyboardButton("🔗 Переходы", callback_data="task_type_clicks")]
+            [InlineKeyboardButton("🔗 Переходы", callback_data="task_type_clicks")],
+            [InlineKeyboardButton("📱 Установки", callback_data="task_type_install")],
+            [InlineKeyboardButton("💬 Комментарии", callback_data="task_type_comments")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -906,7 +702,7 @@ async def handle_task_creation(update: Update, context: ContextTypes.DEFAULT_TYP
     elif step == "requirements":
         task_data["data"]["requirements"] = text
         
-        task_id = TaskManager.create_task(
+        task_id = await TaskManager.create_task(
             title=task_data["data"]["title"],
             description=task_data["data"]["description"],
             task_type=task_data["data"].get("type", "other"),
@@ -919,7 +715,10 @@ async def handle_task_creation(update: Update, context: ContextTypes.DEFAULT_TYP
         del context.user_data["creating_task"]
         
         await update.message.reply_text(
-            f"✅ *Задание создано!*\n\nID: {task_id}",
+            f"✅ *Задание создано!*\n\n"
+            f"ID: `{task_id}`\n"
+            f"Название: {task_data['data']['title']}\n"
+            f"Награда: {task_data['data']['reward']} руб.",
             parse_mode='Markdown'
         )
 
@@ -928,7 +727,9 @@ async def handle_task_type_selection(query, context, data):
     task_type_map = {
         "task_type_subscribers": "Подписчики",
         "task_type_ad": "Реклама",
-        "task_type_clicks": "Переходы"
+        "task_type_clicks": "Переходы",
+        "task_type_install": "Установки",
+        "task_type_comments": "Комментарии"
     }
     
     task_type = task_type_map.get(data, "Другое")
@@ -939,33 +740,35 @@ async def handle_task_type_selection(query, context, data):
         
         await query.edit_message_text(
             "*Шаг 4/6*\n"
-            "Введите цель (например: 1000 подписчиков):",
+            "Введите цель (например: 1000 подписчиков, 500 переходов):",
             parse_mode='Markdown'
         )
 
 async def view_admin_stats(query, context: ContextTypes.DEFAULT_TYPE):
     """Просмотр статистики"""
-    if not AdminManager.is_admin(query.from_user.id):
-        await query.answer("Доступ запрещен!", show_alert=True)
+    if not await AdminManager.is_admin(query.from_user.id):
+        await query.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
-    users = DataManager.load_data(USER_TASKS_FILE, {})
-    tasks = DataManager.load_data(TASKS_FILE, {})
-    
-    total_users = len(users)
-    total_tasks = len(tasks)
-    completed_tasks = sum(1 for t in tasks.values() if t.get("completed"))
-    total_payout = sum(t.get("reward", 0) for t in tasks.values() if t.get("completed"))
-    pending_links = len(DataManager.load_data(PENDING_LINKS_FILE, {}))
-    
-    stats_text = (
-        f"📊 *Статистика*\n\n"
-        f"👥 Пользователей: {total_users}\n"
-        f"📋 Заданий: {total_tasks}\n"
-        f"✅ Выполнено: {completed_tasks}\n"
-        f"💰 Выплачено: {total_payout} руб.\n"
-        f"⏳ Ожидают ссылки: {pending_links}"
-    )
+    pool = await PostgresDB.init_pool()
+    async with pool.acquire() as conn:
+        # Общая статистика
+        total_users = await conn.fetchval('SELECT COUNT(*) FROM users')
+        total_tasks = await conn.fetchval('SELECT COUNT(*) FROM tasks')
+        completed_tasks = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE completed = true")
+        total_payout = await conn.fetchval("SELECT COALESCE(SUM(reward), 0) FROM tasks WHERE completed = true")
+        pending_links = await conn.fetchval('SELECT COUNT(*) FROM pending_links')
+        active_tasks = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE taken_by IS NOT NULL AND completed = false")
+        
+        stats_text = (
+            f"📊 *Общая статистика*\n\n"
+            f"👥 *Пользователей:* {total_users}\n"
+            f"📋 *Всего заданий:* {total_tasks}\n"
+            f"✅ *Выполнено заданий:* {completed_tasks}\n"
+            f"⚙️ *Активных заданий:* {active_tasks}\n"
+            f"💰 *Выплачено всего:* {total_payout} руб.\n"
+            f"⏳ *Ожидают ссылки:* {pending_links}"
+        )
     
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -973,68 +776,51 @@ async def view_admin_stats(query, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(stats_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 # ========== ОСНОВНАЯ ФУНКЦИЯ ==========
-def main():
-    """Запуск бота"""
-    # Создаем приложение
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_creation))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_id))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_work_link))
-    
-    print("=" * 50)
-    print("✅ БОТ TRAFFIC TEAM УСПЕШНО ЗАПУЩЕН!")
-    print("=" * 50)
-    print(f"👑 Главный админ: {MAIN_ADMIN_ID}")
-    print(f"📢 Группа уведомлений: {TASK_NOTIFICATION_GROUP}")
-    print(f"📊 Группа отчетов: {REPORT_GROUP}")
-    print("=" * 50)
-    print("🔄 НОВЫЙ ФУНКЦИОНАЛ:")
-    print("• Кнопка 'Дать ссылку' в уведомлениях")
-    print("• Автоматическая отправка ссылки исполнителю")
-    print("• Исчезновение кнопки после выдачи ссылки")
-    print("=" * 50)
-    print("Нажмите Ctrl+C для остановки")
-    print("=" * 50)
-    
-    # Запускаем бота
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 async def main():
     """Запуск бота"""
-    # Инициализация базы данных
-    await PostgresDB.init_db()
-    print("=" * 50)
-    print("✅ БАЗА ДАННЫХ ИНИЦИАЛИЗИРОВАНА")
-    print("=" * 50)
-    
-    # Создаем приложение
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_creation))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_id))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_work_link))
-    
-    print("=" * 50)
-    print("✅ БОТ TRAFFIC TEAM УСПЕШНО ЗАПУЩЕН!")
-    print("=" * 50)
-    print(f"👑 Главный админ: {MAIN_ADMIN_ID}")
-    print(f"📢 Группа уведомлений: {TASK_NOTIFICATION_GROUP}")
-    print(f"📊 Группа отчетов: {REPORT_GROUP}")
-    print("=" * 50)
-    print("Нажмите Ctrl+C для остановки")
-    print("=" * 50)
-    
     try:
+        # Инициализация базы данных
+        await PostgresDB.init_db()
+        
+        # Проверяем наличие главного админа
+        pool = await PostgresDB.init_pool()
+        async with pool.acquire() as conn:
+            # Добавляем главного админа в таблицу админов, если его там нет
+            await conn.execute('''
+                INSERT INTO admins (user_id, username, added_by, added_date, permissions)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (user_id) DO NOTHING
+            ''', MAIN_ADMIN_ID, "main_admin", MAIN_ADMIN_ID, datetime.now(), 
+                json.dumps(["manage_tasks", "view_stats", "manage_admins"]))
+        
+        # Создаем приложение
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Добавляем обработчики
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_creation))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_id))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_work_link))
+        
+        print("=" * 50)
+        print("✅ БОТ TRAFFIC TEAM УСПЕШНО ЗАПУЩЕН!")
+        print("=" * 50)
+        print(f"👑 Главный админ: {MAIN_ADMIN_ID}")
+        print(f"📢 Группа уведомлений: {TASK_NOTIFICATION_GROUP}")
+        print(f"📊 Группа отчетов: {REPORT_GROUP}")
+        print("=" * 50)
+        print("✅ База данных PostgreSQL подключена")
+        print("=" * 50)
+        print("Нажмите Ctrl+C для остановки")
+        print("=" * 50)
+        
         # Запускаем бота
         await application.run_polling(allowed_updates=Update.ALL_TYPES)
-    finally:
-        # Закрываем соединение с базой данных
-        await PostgresDB.close_pool()
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        raise
 
+if __name__ == '__main__':
+    asyncio.run(main())

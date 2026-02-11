@@ -10,6 +10,9 @@ from typing import Dict, List, Optional
 MAIN_ADMIN_ID = int(os.environ.get('MAIN_ADMIN_ID', '8358009538'))
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL не установлен в переменных окружения!")
+
 class PostgresDB:
     """Класс для работы с PostgreSQL"""
     
@@ -262,7 +265,10 @@ class TaskManager:
             await conn.execute('''
                 INSERT INTO user_tasks (user_id, task_id, status, taken_date)
                 VALUES ($1, $2, 'active', $3)
-                ON CONFLICT (user_id, task_id) DO NOTHING
+                ON CONFLICT (user_id, task_id) DO UPDATE SET
+                    status = 'active',
+                    taken_date = $3,
+                    completed_date = NULL
             ''', user_id, task_id, datetime.now())
             
             return True
@@ -322,7 +328,7 @@ class TaskManager:
                 VALUES ($1, $2, $3, $4, 0, 0, true)
             ''', link_id, user_id, task_id, datetime.now())
         
-        return f"https://t.me/your_tracking_bot?start={link_id}"
+        return f"https://t.me/your_bot_username?start={link_id}"
 
 class AdminManager:
     @staticmethod
@@ -352,7 +358,11 @@ class AdminManager:
             await conn.execute('''
                 INSERT INTO admins (user_id, username, added_by, added_date, permissions)
                 VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (user_id) DO NOTHING
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    added_by = EXCLUDED.added_by,
+                    added_date = EXCLUDED.added_date,
+                    permissions = EXCLUDED.permissions
             ''', user_id, username, added_by, datetime.now(), 
                 json.dumps(["manage_tasks", "view_stats"]))
     
@@ -441,6 +451,17 @@ class TrackingLinksManager:
         async with pool.acquire() as conn:
             await conn.execute('''
                 UPDATE tracking_links 
-                SET clicks = clicks + 1, last_click = $1
-                WHERE link_id = $2
-            ''', datetime.now(), link_id)
+                SET clicks = clicks + 1
+                WHERE link_id = $1
+            ''', link_id)
+    
+    @staticmethod
+    async def add_conversion(link_id: str):
+        """Добавление конверсии"""
+        pool = await PostgresDB.init_pool()
+        async with pool.acquire() as conn:
+            await conn.execute('''
+                UPDATE tracking_links 
+                SET conversions = conversions + 1
+                WHERE link_id = $1
+            ''', link_id)
