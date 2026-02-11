@@ -2,6 +2,8 @@ import logging
 import json
 import hashlib
 import secrets
+import os
+import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -15,11 +17,24 @@ from telegram.ext import (
     filters
 )
 
-# ========== КОНФИГУРАЦИЯ ==========
-BOT_TOKEN = "8346231905:AAHHG3of6aAV69uYwF3e3onUjKuA0zIcZn4"
-TASK_NOTIFICATION_GROUP = "@wedferfwewf"  # Группа для уведомлений о взятии заданий
-REPORT_GROUP = "@ertghpjoterg"  # Группа для ежедневных отчетов
-MAIN_ADMIN_ID = 8358009538  # ID главного админа
+# Импортируем менеджеры базы данных
+from database import (
+    PostgresDB, UserManager, TaskManager, AdminManager, 
+    PendingLinksManager, TrackingLinksManager
+)
+
+# ========== КОНФИГУРАЦИЯ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8346231905:AAHHG3of6aAV69uYwF3e3onUjKuA0zIcZn4')
+MAIN_ADMIN_ID = int(os.environ.get('MAIN_ADMIN_ID', '8358009538'))
+TASK_NOTIFICATION_GROUP = os.environ.get('TASK_NOTIFICATION_GROUP', '@wedferfwewf')
+REPORT_GROUP = os.environ.get('REPORT_GROUP', '@ertghpjoterg')
+
+# ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Файлы для хранения данных
 USERS_FILE = "users_data.json"
@@ -273,10 +288,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     user = update.effective_user
     
+    # Создаем или получаем пользователя в базе данных
+    await UserManager.get_or_create_user(
+        user.id, 
+        user.username or "", 
+        user.first_name or ""
+    )
+    
     if context.args and len(context.args) > 0:
         link_id = context.args[0]
         await handle_tracking_link(update, context, link_id)
         return
+
     
     welcome_text = (
         "🚀 *Приветствуем, будущий трафик-менеджер!*\n\n"
@@ -312,19 +335,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_tracking_link(update: Update, context: ContextTypes.DEFAULT_TYPE, link_id: str):
     """Обработка переходов по отслеживающим ссылкам"""
-    links = DataManager.load_data(LINKS_FILE, {})
+    link_data = await TrackingLinksManager.get_link(link_id)
     
-    if link_id not in links:
+    if not link_data:
         await update.message.reply_text("Ссылка не найдена или устарела.")
         return
     
-    link_data = links[link_id]
+    # Увеличиваем счетчик кликов
+    await TrackingLinksManager.increment_clicks(link_id)
     
-    links[link_id]["clicks"] = links[link_id].get("clicks", 0) + 1
-    links[link_id]["last_click"] = datetime.now().isoformat()
-    DataManager.save_data(LINKS_FILE, links)
-    
-    task = TaskManager.get_task(link_data["task_id"])
+    task = await TaskManager.get_task(link_data["task_id"])
     
     if task:
         await update.message.reply_text(
@@ -360,15 +380,13 @@ async def send_task_notification(context: ContextTypes.DEFAULT_TYPE, user, task,
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Сохраняем информацию о задании для последующей обработки
-    pending = DataManager.load_data(PENDING_LINKS_FILE, {})
-    pending[task['id']] = {
+    await PendingLinksManager.save_pending(task['id'], {
         "user_id": user.id,
         "username": user.username,
         "task_title": task['title'],
-        "message_sent": datetime.now().isoformat(),
+        "message_sent": datetime.now(),
         "tracking_link": tracking_link
-    }
-    DataManager.save_data(PENDING_LINKS_FILE, pending)
+    })
     
     await context.bot.send_message(
         chat_id=TASK_NOTIFICATION_GROUP,
@@ -988,5 +1006,40 @@ def main():
     # Запускаем бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+async def main():
+    """Запуск бота"""
+    # Инициализация базы данных
+    await PostgresDB.init_db()
+    print("=" * 50)
+    print("✅ БАЗА ДАННЫХ ИНИЦИАЛИЗИРОВАНА")
+    print("=" * 50)
+    
+    # Создаем приложение
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_creation))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_id))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_work_link))
+    
+    print("=" * 50)
+    print("✅ БОТ TRAFFIC TEAM УСПЕШНО ЗАПУЩЕН!")
+    print("=" * 50)
+    print(f"👑 Главный админ: {MAIN_ADMIN_ID}")
+    print(f"📢 Группа уведомлений: {TASK_NOTIFICATION_GROUP}")
+    print(f"📊 Группа отчетов: {REPORT_GROUP}")
+    print("=" * 50)
+    print("Нажмите Ctrl+C для остановки")
+    print("=" * 50)
+    
+    try:
+        # Запускаем бота
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        # Закрываем соединение с базой данных
+        await PostgresDB.close_pool()
+
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
