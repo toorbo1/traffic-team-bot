@@ -1,21 +1,4 @@
-# Создайте .gitignore
-echo "# Файлы конфигурации
-config.py
-*.env
-.env
-.env.local
-
-# Файлы данных
-*.json
-!requirements.json
-!package.json
-
-# Логи
-*.log
-logs/
-bot.log
-
-# Кэш Python
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -24,17 +7,23 @@ __pycache__/
 .coverage
 htmlcov/
 
-# VS Code
+# Virtual environment
+venv/
+env/
+ENV/
+.env
+.env.local
+.env.*
+
+# IDE
 .vscode/
+.idea/
 *.code-workspace
 
-# Системные файлы
+# System files
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Временные файлы
-temp/
-tmp/
-*.tmp
-" > .gitignore
+# Railway specific
+.railway/
