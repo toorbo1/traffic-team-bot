@@ -13,28 +13,41 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL не установлен в переменных окружения!")
 
+
 class PostgresDB:
     """Класс для работы с PostgreSQL"""
-    
+
     _pool = None
-    
+
     @classmethod
     async def init_pool(cls):
         """Инициализация пула соединений"""
         if not cls._pool:
-            cls._pool = await asyncpg.create_pool(DATABASE_URL)
+            if not DATABASE_URL:
+                raise ValueError("❌ DATABASE_URL не установлен в переменных окружения!")
+            try:
+                cls._pool = await asyncpg.create_pool(
+                    DATABASE_URL,
+                    min_size=1,
+                    max_size=10,
+                    command_timeout=60
+                )
+                print("✅ Подключение к PostgreSQL установлено")
+            except Exception as e:
+                print(f"❌ Ошибка подключения к PostgreSQL: {e}")
+                raise
         return cls._pool
-    
+
     @classmethod
     async def close_pool(cls):
         """Закрытие пула"""
         if cls._pool:
             await cls._pool.close()
             cls._pool = None
-    
+
     @classmethod
     async def init_db(cls):
-        """Создание таблиц"""
+        """Создание таблиц, если их нет"""
         pool = await cls.init_pool()
         async with pool.acquire() as conn:
             # Таблица пользователей
@@ -48,7 +61,7 @@ class PostgresDB:
                     rating INTEGER DEFAULT 0
                 )
             ''')
-            
+
             # Таблица администраторов
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS admins (
@@ -59,7 +72,7 @@ class PostgresDB:
                     permissions JSONB
                 )
             ''')
-            
+
             # Таблица заданий
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -82,7 +95,7 @@ class PostgresDB:
                     available BOOLEAN DEFAULT true
                 )
             ''')
-            
+
             # Таблица активных заданий пользователей
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_tasks (
@@ -94,7 +107,7 @@ class PostgresDB:
                     PRIMARY KEY (user_id, task_id)
                 )
             ''')
-            
+
             # Таблица для отслеживания ссылок
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tracking_links (
@@ -108,7 +121,7 @@ class PostgresDB:
                     work_link TEXT
                 )
             ''')
-            
+
             # Таблица для ожидающих ссылок
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS pending_links (
@@ -120,90 +133,62 @@ class PostgresDB:
                     tracking_link TEXT
                 )
             ''')
-            
+
             print("✅ Таблицы PostgreSQL созданы/проверены")
-class PostgresDB:
-    """Класс для работы с PostgreSQL"""
-    
-    _pool = None
-    
-    @classmethod
-    async def init_pool(cls):
-        """Инициализация пула соединений"""
-        if not cls._pool:
-            if not DATABASE_URL:
-                raise ValueError("❌ DATABASE_URL не установлен в переменных окружения!")
-            try:
-                cls._pool = await asyncpg.create_pool(
-                    DATABASE_URL,
-                    min_size=1,
-                    max_size=10,
-                    command_timeout=60
-                )
-                print("✅ Подключение к PostgreSQL установлено")
-            except Exception as e:
-                print(f"❌ Ошибка подключения к PostgreSQL: {e}")
-                raise
-        return cls._pool
-    
+
+
 class UserManager:
     @staticmethod
     async def get_or_create_user(user_id: int, username: str = "", first_name: str = ""):
         """Получение или создание пользователя"""
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
-            # Пытаемся найти пользователя
             user = await conn.fetchrow(
                 'SELECT * FROM users WHERE user_id = $1',
                 user_id
             )
-            
             if not user:
-                # Создаем нового пользователя
                 await conn.execute('''
                     INSERT INTO users (user_id, username, first_name, joined_date, earned, rating)
                     VALUES ($1, $2, $3, $4, 0, 0)
                 ''', user_id, username, first_name, datetime.now())
                 return None
             return dict(user) if user else None
-    
+
     @staticmethod
     async def get_user_stats(user_id: int) -> Dict:
         """Получение статистики пользователя"""
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
-            # Получаем выполненные задания
             completed = await conn.fetch('''
                 SELECT t.task_id, t.reward 
                 FROM user_tasks ut
                 JOIN tasks t ON ut.task_id = t.task_id
                 WHERE ut.user_id = $1 AND ut.status = 'completed'
             ''', user_id)
-            
-            # Получаем активные задания
+
             active = await conn.fetch('''
                 SELECT task_id 
                 FROM user_tasks 
                 WHERE user_id = $1 AND status = 'active'
             ''', user_id)
-            
-            # Получаем пользователя
+
             user = await conn.fetchrow(
                 'SELECT earned FROM users WHERE user_id = $1',
                 user_id
             )
-            
+
             completed_count = len(completed)
             active_count = len(active)
             total_earned = user['earned'] if user else 0
-            
+
             return {
                 "completed_count": completed_count,
                 "active_count": active_count,
                 "total_earned": total_earned,
                 "rating": completed_count * 10
             }
-    
+
     @staticmethod
     async def add_earned(user_id: int, amount: float):
         """Добавление заработка пользователю"""
@@ -214,6 +199,7 @@ class UserManager:
                 SET earned = earned + $1 
                 WHERE user_id = $2
             ''', amount, user_id)
+
 
 class TaskManager:
     @staticmethod
@@ -228,7 +214,6 @@ class TaskManager:
     ) -> str:
         """Создание нового задания"""
         task_id = hashlib.md5(f"{title}_{datetime.now()}".encode()).hexdigest()[:8]
-        
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
             await conn.execute('''
@@ -238,9 +223,8 @@ class TaskManager:
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, true)
             ''', task_id, title, description, task_type, target, reward,
                 requirements, created_by, datetime.now())
-        
         return task_id
-    
+
     @staticmethod
     async def get_available_tasks() -> List[Dict]:
         """Получение списка доступных заданий"""
@@ -252,7 +236,7 @@ class TaskManager:
                 ORDER BY created_date DESC
             ''')
             return [dict(row) for row in rows]
-    
+
     @staticmethod
     async def get_task(task_id: str) -> Optional[Dict]:
         """Получение задания по ID"""
@@ -263,28 +247,23 @@ class TaskManager:
                 task_id
             )
             return dict(row) if row else None
-    
+
     @staticmethod
     async def assign_task(task_id: str, user_id: int) -> bool:
         """Назначение задания пользователю"""
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
-            # Проверяем доступность задания
             task = await conn.fetchrow(
                 'SELECT * FROM tasks WHERE task_id = $1 AND available = true AND taken_by IS NULL',
                 task_id
             )
             if not task:
                 return False
-            
-            # Назначаем задание
             await conn.execute('''
                 UPDATE tasks 
                 SET taken_by = $1, available = false, assigned_date = $2
                 WHERE task_id = $3
             ''', user_id, datetime.now(), task_id)
-            
-            # Добавляем в user_tasks
             await conn.execute('''
                 INSERT INTO user_tasks (user_id, task_id, status, taken_date)
                 VALUES ($1, $2, 'active', $3)
@@ -293,9 +272,8 @@ class TaskManager:
                     taken_date = $3,
                     completed_date = NULL
             ''', user_id, task_id, datetime.now())
-            
             return True
-    
+
     @staticmethod
     async def set_work_link(task_id: str, link: str) -> bool:
         """Установка рабочей ссылки"""
@@ -305,53 +283,44 @@ class TaskManager:
                 UPDATE tasks SET work_link = $1 WHERE task_id = $2
             ''', link, task_id)
             return 'UPDATE 1' in result
-    
+
     @staticmethod
     async def complete_task(task_id: str, user_id: int, proof: str = "") -> bool:
         """Завершение задания"""
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
-            # Проверяем, что задание взято этим пользователем
             task = await conn.fetchrow(
                 'SELECT * FROM tasks WHERE task_id = $1 AND taken_by = $2',
                 task_id, user_id
             )
             if not task:
                 return False
-            
-            # Завершаем задание
             await conn.execute('''
                 UPDATE tasks 
                 SET completed = true, completed_date = $1, proof = $2, active = false
                 WHERE task_id = $3
             ''', datetime.now(), proof, task_id)
-            
-            # Обновляем статус в user_tasks
             await conn.execute('''
                 UPDATE user_tasks 
                 SET status = 'completed', completed_date = $1
                 WHERE user_id = $2 AND task_id = $3
             ''', datetime.now(), user_id, task_id)
-            
-            # Добавляем заработок пользователю
             await UserManager.add_earned(user_id, task['reward'])
-            
             return True
-    
+
     @staticmethod
     async def generate_tracking_link(user_id: int, task_id: str) -> str:
         """Генерация отслеживающей ссылки"""
         token = secrets.token_urlsafe(16)
         link_id = hashlib.md5(f"{user_id}_{task_id}_{token}".encode()).hexdigest()[:8]
-        
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
             await conn.execute('''
                 INSERT INTO tracking_links (link_id, user_id, task_id, created, clicks, conversions, active)
                 VALUES ($1, $2, $3, $4, 0, 0, true)
             ''', link_id, user_id, task_id, datetime.now())
-        
         return f"https://t.me/your_bot_username?start={link_id}"
+
 
 class AdminManager:
     @staticmethod
@@ -359,7 +328,6 @@ class AdminManager:
         """Проверка, является ли пользователь админом"""
         if user_id == MAIN_ADMIN_ID:
             return True
-        
         pool = await PostgresDB.init_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -367,12 +335,12 @@ class AdminManager:
                 user_id
             )
             return row is not None
-    
+
     @staticmethod
     async def is_main_admin(user_id: int) -> bool:
         """Проверка, является ли пользователь главным админом"""
         return user_id == MAIN_ADMIN_ID
-    
+
     @staticmethod
     async def add_admin(user_id: int, username: str = "", added_by: int = None):
         """Добавление администратора"""
@@ -386,9 +354,9 @@ class AdminManager:
                     added_by = EXCLUDED.added_by,
                     added_date = EXCLUDED.added_date,
                     permissions = EXCLUDED.permissions
-            ''', user_id, username, added_by, datetime.now(), 
+            ''', user_id, username, added_by, datetime.now(),
                 json.dumps(["manage_tasks", "view_stats"]))
-    
+
     @staticmethod
     async def remove_admin(user_id: int) -> bool:
         """Удаление администратора"""
@@ -399,7 +367,7 @@ class AdminManager:
                 user_id
             )
             return 'DELETE 1' in result
-    
+
     @staticmethod
     async def get_all_admins() -> List[Dict]:
         """Получение всех администраторов"""
@@ -407,6 +375,7 @@ class AdminManager:
         async with pool.acquire() as conn:
             rows = await conn.fetch('SELECT * FROM admins')
             return [dict(row) for row in rows]
+
 
 class PendingLinksManager:
     @staticmethod
@@ -423,9 +392,9 @@ class PendingLinksManager:
                     task_title = EXCLUDED.task_title,
                     message_sent = EXCLUDED.message_sent,
                     tracking_link = EXCLUDED.tracking_link
-            ''', task_id, data['user_id'], data['username'], data['task_title'], 
+            ''', task_id, data['user_id'], data['username'], data['task_title'],
                 data['message_sent'], data['tracking_link'])
-    
+
     @staticmethod
     async def get_pending(task_id: str) -> Optional[Dict]:
         """Получение ожидающей ссылки"""
@@ -436,7 +405,7 @@ class PendingLinksManager:
                 task_id
             )
             return dict(row) if row else None
-    
+
     @staticmethod
     async def delete_pending(task_id: str):
         """Удаление ожидающей ссылки"""
@@ -446,7 +415,7 @@ class PendingLinksManager:
                 'DELETE FROM pending_links WHERE task_id = $1',
                 task_id
             )
-    
+
     @staticmethod
     async def get_all_pending() -> List[Dict]:
         """Получение всех ожидающих ссылок"""
@@ -454,6 +423,7 @@ class PendingLinksManager:
         async with pool.acquire() as conn:
             rows = await conn.fetch('SELECT * FROM pending_links')
             return [dict(row) for row in rows]
+
 
 class TrackingLinksManager:
     @staticmethod
@@ -466,7 +436,7 @@ class TrackingLinksManager:
                 link_id
             )
             return dict(row) if row else None
-    
+
     @staticmethod
     async def increment_clicks(link_id: str):
         """Увеличение счетчика кликов"""
@@ -477,7 +447,7 @@ class TrackingLinksManager:
                 SET clicks = clicks + 1
                 WHERE link_id = $1
             ''', link_id)
-    
+
     @staticmethod
     async def add_conversion(link_id: str):
         """Добавление конверсии"""
