@@ -1333,6 +1333,7 @@ async def shutdown(application):
 
 # ========== ОСНОВНАЯ ФУНКЦИЯ ==========
 async def main_async():
+    
     """Асинхронная основная функция"""
     # Инициализация базы данных
     await PostgresDB.init_db()

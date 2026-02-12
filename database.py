@@ -5,6 +5,7 @@ import hashlib
 import secrets
 from datetime import datetime
 from typing import Dict, List, Optional
+import ssl
 
 # Получаем переменные окружения
 MAIN_ADMIN_ID = int(os.environ.get('MAIN_ADMIN_ID', '8358009538'))
@@ -26,15 +27,28 @@ class PostgresDB:
             if not DATABASE_URL:
                 raise ValueError("❌ DATABASE_URL не установлен в переменных окружения!")
             try:
+                # Railway требует SSL
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                
                 cls._pool = await asyncpg.create_pool(
                     DATABASE_URL,
                     min_size=1,
                     max_size=10,
-                    command_timeout=60
+                    command_timeout=60,
+                    ssl=ssl_context  # Добавляем SSL
                 )
                 print("✅ Подключение к PostgreSQL установлено")
+                
+                # Проверяем соединение
+                async with cls._pool.acquire() as conn:
+                    await conn.fetchval('SELECT 1')
+                print("✅ Соединение с PostgreSQL проверено")
+                
             except Exception as e:
                 print(f"❌ Ошибка подключения к PostgreSQL: {e}")
+                print(f"DATABASE_URL: {DATABASE_URL[:20]}...")
                 raise
         return cls._pool
 
@@ -319,7 +333,8 @@ class TaskManager:
                 INSERT INTO tracking_links (link_id, user_id, task_id, created, clicks, conversions, active)
                 VALUES ($1, $2, $3, $4, 0, 0, true)
             ''', link_id, user_id, task_id, datetime.now())
-        return f"https://t.me/your_bot_username?start={link_id}"
+        BOT_USERNAME = os.environ.get('BOT_USERNAME', 'your_bot_username')
+        return f"https://t.me/{BOT_USERNAME}?start={link_id}"
 
 
 class AdminManager:
