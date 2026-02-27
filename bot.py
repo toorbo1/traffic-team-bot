@@ -14,7 +14,7 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "@rethewf")  # можно указать @u
 
 # Если CHANNEL_ID указан как @username, сохраняем также имя без @ для сравнения
 CHANNEL_USERNAME = CHANNEL_ID[1:] if CHANNEL_ID.startswith('@') else None
-# ========================================================
+# =============================================== т=========
 
 # Логирование
 logging.basicConfig(
