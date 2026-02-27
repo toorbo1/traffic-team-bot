@@ -1,29 +1,8 @@
-# Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Virtual environment
-venv/
-env/
-ENV/
+bot.log
 .env
-.env.local
-.env.*
-
-# IDE
-.vscode/
-.idea/
-*.code-workspace
-
-# System files
+.venv
+venv/
+ENV/
 .DS_Store
-Thumbs.db
-desktop.ini
-
-# Railway specific
-.railway/
