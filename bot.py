@@ -6,14 +6,17 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from aiohttp import web  # для health check на Railway
+from aiohttp import web
 
-# ========== Настройки из переменных окружения ==========
+# ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@rethewf")  # по умолчанию ваш канал
-# =======================================================
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@rethewf")  # можно указать @username или числовой ID
 
-# Логирование в файл и в консоль
+# Если CHANNEL_ID указан как @username, сохраняем также имя без @ для сравнения
+CHANNEL_USERNAME = CHANNEL_ID[1:] if CHANNEL_ID.startswith('@') else None
+# ========================================================
+
+# Логирование
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -26,10 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher() 
+dp = Dispatcher()
 
-# Хранилище связей (в памяти, но можно заменить на database.py)
-# Если используете PostgreSQL, раскомментируйте код в database.py и импортируйте функции
+# Хранилище связей сообщений в канале с пользователями (в памяти)
 message_owners = {}
 
 # Состояния для ответа администратора
@@ -37,13 +39,24 @@ class AdminReply(StatesGroup):
     waiting_for_reply = State()
 
 def get_reply_keyboard(user_id: int):
+    """Кнопка для ответа пользователю, которая будет в канале"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Ответить пользователю", callback_data=f"reply:{user_id}")]
         ]
     )
 
-# ========== Команда /start ==========
+def is_channel(chat: types.Chat) -> bool:
+    """Проверяет, является ли чат целевым каналом"""
+    # Сравниваем по ID (если CHANNEL_ID числовой)
+    if str(chat.id) == CHANNEL_ID:
+        return True
+    # Сравниваем по username (если CHANNEL_ID был @username)
+    if CHANNEL_USERNAME and chat.username == CHANNEL_USERNAME:
+        return True
+    return False
+
+# ========== КОМАНДА /start ==========
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -52,20 +65,60 @@ async def cmd_start(message: types.Message):
         "Ответы из канала вы получите здесь."
     )
 
-# ========== Пересылка сообщений от пользователя в канал ==========
+# ========== ОБРАБОТКА НАЖАТИЯ КНОПКИ "ОТВЕТИТЬ" ==========
+@dp.callback_query(lambda c: c.data and c.data.startswith('reply:'))
+async def process_reply_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, user_id_str = callback.data.split(':')
+    target_user_id = int(user_id_str)
+    # Устанавливаем состояние ожидания ответа
+    await state.set_state(AdminReply.waiting_for_reply)
+    await state.update_data(target_user_id=target_user_id)
+    await callback.message.reply(f"✍️ Напишите ответ для пользователя (ID: {target_user_id})")
+
+# ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНИСТРАТОРА (ИЗ КАНАЛА) ==========
+# Этот обработчик должен быть ДО общего, чтобы перехватывать сообщения, когда активно состояние
+@dp.message(AdminReply.waiting_for_reply)
+async def send_admin_reply(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    target_user_id = data.get('target_user_id')
+    if not target_user_id:
+        await message.reply("❌ Ошибка: получатель не найден.")
+        await state.clear()
+        return
+
+    try:
+        # Отправляем ответ пользователю
+        await bot.send_message(
+            target_user_id,
+            f"✉️ **Ответ от администратора канала:**\n\n{message.text}"
+        )
+        await message.reply("✅ Ответ отправлен пользователю!")
+        logger.info(f"Ответ отправлен пользователю {target_user_id}")
+    except Exception as e:
+        logger.exception("Ошибка при отправке ответа пользователю")
+        await message.reply("❌ Не удалось отправить ответ. Возможно, пользователь заблокировал бота.")
+    finally:
+        await state.clear()
+
+# ========== ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ (ПЕРЕСЫЛКА В КАНАЛ) ==========
 @dp.message()
 async def forward_to_channel(message: types.Message):
-    # Если сообщение пришло из самого канала – игнорируем (чтобы не создавать цикл)
-    chat = message.chat
-    if chat.id == CHANNEL_ID or (hasattr(chat, 'username') and f"@{chat.username}" == CHANNEL_ID):
-        logger.info(f"Сообщение из канала проигнорировано (ID: {chat.id})")
-        return 
+    # Игнорируем сообщения из самого канала (чтобы избежать зацикливания)
+    if is_channel(message.chat):
+        logger.debug(f"Сообщение из канала проигнорировано: {message.text}")
+        return
+
+    # Игнорируем служебные сообщения (например, от самого бота)
+    if message.from_user and message.from_user.is_bot:
+        return
+
     try:
         user = message.from_user
         username = f"@{user.username}" if user.username else "нет username"
         caption_base = f"📨 Сообщение от {user.full_name} ({username})"
 
-        # Определяем тип и отправляем
+        # Определяем тип сообщения и отправляем в канал с кнопкой
         if message.text:
             sent = await bot.send_message(
                 CHANNEL_ID,
@@ -110,7 +163,7 @@ async def forward_to_channel(message: types.Message):
                 caption=caption, reply_markup=get_reply_keyboard(user.id)
             )
         elif message.sticker:
-            # Стикер отправляем отдельно + уведомление
+            # Стикер отправляем отдельно, потом текстовое уведомление
             await bot.send_sticker(CHANNEL_ID, message.sticker.file_id)
             sent = await bot.send_message(
                 CHANNEL_ID, f"{caption_base} (стикер)",
@@ -120,8 +173,9 @@ async def forward_to_channel(message: types.Message):
             await message.answer("❌ Этот тип сообщений не поддерживается.")
             return
 
-        # Сохраняем связь (в памяти или БД)
-        message_owners[sent.message_id] = user.id
+        # Сохраняем связь: message_id в канале -> user_id
+        if sent:
+            message_owners[sent.message_id] = user.id
 
         await message.answer("✅ Сообщение отправлено в канал!")
 
@@ -129,39 +183,7 @@ async def forward_to_channel(message: types.Message):
         logger.exception("Ошибка при отправке в канал")
         await message.answer("❌ Произошла ошибка, попробуйте позже.")
 
-# ========== Обработка нажатия на кнопку "Ответить" ==========
-@dp.callback_query(lambda c: c.data and c.data.startswith('reply:'))
-async def process_reply_callback(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
-    _, user_id_str = callback.data.split(':')
-    target_user_id = int(user_id_str)
-    await state.set_state(AdminReply.waiting_for_reply)
-    await state.update_data(target_user_id=target_user_id)
-    await callback.message.reply(f"✍️ Напишите ответ для пользователя (ID: {target_user_id})")
-
-# ========== Получение ответа от администратора ==========
-# ========== СПЕРВА ОБРАБОТЧИК ОТВЕТОВ АДМИНИСТРАТОРА (С FSM) ==========
-@dp.message(AdminReply.waiting_for_reply)
-async def send_admin_reply(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    target_user_id = data.get('target_user_id')
-    if not target_user_id:
-        await message.reply("❌ Ошибка: получатель не найден.")
-        await state.clear()
-        return
-    try:
-        # Отправляем ответ пользователю
-        await bot.send_message(
-            target_user_id,
-            f"✉️ **Ответ от администратора канала:**\n\n{message.text}"
-        )
-        await message.reply("✅ Ответ отправлен пользователю!")
-        await state.clear()
-    except Exception as e:
-        logger.exception("Ошибка при отправке ответа пользователю")
-        await message.reply("❌ Не удалось отправить ответ.")
-
-# ========== Простой веб-сервер для health check (Railway) ==========
+# ========== ВЕБ-СЕРВЕР ДЛЯ HEALTH CHECK (RAILWAY) ==========
 async def health_check(request):
     return web.Response(text="Bot is running")
 
@@ -175,9 +197,9 @@ async def start_web_server():
     await site.start()
     logger.info(f"Web server started on port {port}")
 
-# ========== Главная функция запуска ==========
+# ========== ЗАПУСК БОТА ==========
 async def main():
-    # Запускаем веб-сервер (в фоне)
+    # Запускаем веб-сервер для health check
     asyncio.create_task(start_web_server())
     # Запускаем поллинг
     await dp.start_polling(bot)
