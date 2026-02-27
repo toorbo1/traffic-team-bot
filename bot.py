@@ -55,6 +55,11 @@ async def cmd_start(message: types.Message):
 # ========== Пересылка сообщений от пользователя в канал ==========
 @dp.message()
 async def forward_to_channel(message: types.Message):
+    # Если сообщение пришло из самого канала – игнорируем (чтобы не создавать цикл)
+    chat = message.chat
+    if chat.id == CHANNEL_ID or (hasattr(chat, 'username') and f"@{chat.username}" == CHANNEL_ID):
+        logger.info(f"Сообщение из канала проигнорировано (ID: {chat.id})")
+        return
     try:
         user = message.from_user
         username = f"@{user.username}" if user.username else "нет username"
@@ -135,6 +140,7 @@ async def process_reply_callback(callback: types.CallbackQuery, state: FSMContex
     await callback.message.reply(f"✍️ Напишите ответ для пользователя (ID: {target_user_id})")
 
 # ========== Получение ответа от администратора ==========
+# ========== СПЕРВА ОБРАБОТЧИК ОТВЕТОВ АДМИНИСТРАТОРА (С FSM) ==========
 @dp.message(AdminReply.waiting_for_reply)
 async def send_admin_reply(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -144,11 +150,12 @@ async def send_admin_reply(message: types.Message, state: FSMContext):
         await state.clear()
         return
     try:
+        # Отправляем ответ пользователю
         await bot.send_message(
             target_user_id,
             f"✉️ **Ответ от администратора канала:**\n\n{message.text}"
         )
-        await message.reply("✅ Ответ отправлен!")
+        await message.reply("✅ Ответ отправлен пользователю!")
         await state.clear()
     except Exception as e:
         logger.exception("Ошибка при отправке ответа пользователю")
