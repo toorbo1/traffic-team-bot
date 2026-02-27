@@ -25,7 +25,7 @@ from database import (
 
 # ========== КОНФИГУРАЦИЯ ==========
 # Берем настройки из переменных окружения
-BOT_TOKEN = os.environ.get('BOT_TOKEN')  # УБРАЛИ ДЕФОЛТНЫЙ ТОКЕН!
+BOT_TOKEN = os.environ.get('8719482043:AAE6posoOel7sOz8cou-Q2KWkPphuXduosw')  # УБРАЛИ ДЕФОЛТНЫЙ ТОКЕН!
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен в переменных окружения!")
 
