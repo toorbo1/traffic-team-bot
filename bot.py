@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher() 
 
 # Хранилище связей (в памяти, но можно заменить на database.py)
 # Если используете PostgreSQL, раскомментируйте код в database.py и импортируйте функции
