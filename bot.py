@@ -59,7 +59,7 @@ async def forward_to_channel(message: types.Message):
     chat = message.chat
     if chat.id == CHANNEL_ID or (hasattr(chat, 'username') and f"@{chat.username}" == CHANNEL_ID):
         logger.info(f"Сообщение из канала проигнорировано (ID: {chat.id})")
-        return
+        return 
     try:
         user = message.from_user
         username = f"@{user.username}" if user.username else "нет username"
