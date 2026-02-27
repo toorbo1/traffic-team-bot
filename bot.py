@@ -275,4 +275,4 @@ if __name__ == "__main__":
     if CHANNEL_USERNAME:
         logger.info(f"✅ CHANNEL_USERNAME: {CHANNEL_USERNAME}")
     
-    asyncio.run(main())
+    asyncio.run(main()) 
