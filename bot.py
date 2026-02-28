@@ -8,11 +8,23 @@ from aiohttp import web
 
 # ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# CHANNEL_ID должен быть числовым ID группы (например, -1001234567890) или @username
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1005252934052")  # По умолчанию ваш ID
+# CHANNEL_ID может быть числовым ID (например, -1001234567890) или юзернеймом (@example)
+RAW_CHANNEL_ID = os.getenv("CHANNEL_ID", "-1005252934052")  # по умолчанию ваш ID как строка
 REDIS_URL = os.getenv("REDIS_URL")
 # ========================================================
 
+# Преобразуем CHANNEL_ID в нужный тип (int для числовых ID, str для юзернеймов)
+try:
+    # Убираем пробелы и проверяем, похоже ли на число (с учётом ведущего минуса)
+    cleaned = RAW_CHANNEL_ID.strip()
+    if cleaned.lstrip('-').isdigit():
+        CHANNEL_ID = int(cleaned)
+    else:
+        CHANNEL_ID = cleaned  # оставляем как есть (например, @username)
+except:
+    CHANNEL_ID = RAW_CHANNEL_ID.strip()
+
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -125,6 +137,30 @@ async def cmd_cancel(message: types.Message):
     await clear_admin_reply(admin_id)
     await message.answer("✅ Режим ответа сброшен.")
 
+# ========== КОМАНДА /debug (для проверки статуса бота в группе) ==========
+@dp.message(Command("debug"))
+async def cmd_debug(message: types.Message):
+    """Показывает информацию о группе и правах бота (только для администраторов)"""
+    if not is_target_chat(message.chat) and message.chat.type != "private":
+        await message.answer("❌ Эта команда работает только в целевой группе или личке.")
+        return
+
+    try:
+        # Пытаемся получить информацию о чате
+        chat = await bot.get_chat(CHANNEL_ID)
+        bot_member = await chat.get_member(bot.id)
+        status = "✅ Бот является администратором" if bot_member.status == "administrator" else f"❌ Статус бота: {bot_member.status}"
+        await message.answer(
+            f"**Информация о группе:**\n"
+            f"ID: `{chat.id}`\n"
+            f"Название: {chat.title}\n"
+            f"Тип: {chat.type}\n"
+            f"Бот: {status}\n\n"
+            f"Убедитесь, что бот добавлен в администраторы с правом 'Читать сообщения'."
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при получении информации: {e}")
+
 # ========== ОБРАБОТКА КНОПКИ "ОТВЕТИТЬ" ==========
 @dp.callback_query(lambda c: c.data and c.data.startswith('reply:'))
 async def process_reply_callback(callback: types.CallbackQuery):
@@ -197,7 +233,7 @@ async def handle_message(message: types.Message):
                 await message.reply("✅ Ответ отправлен пользователю!")
             except Exception as e:
                 logger.exception(f"❌ Ошибка при отправке ответа пользователю {target_user_id}")
-                await message.reply(f"❌ Не удалось отправить ответ: {str(e)[:100]}")
+                await message.reply(f"❌ Не удалось отправить ответ: {str(e)[:200]}")
             finally:
                 await clear_admin_reply(admin_id)
             return
@@ -206,7 +242,6 @@ async def handle_message(message: types.Message):
             return
 
     # --- Сообщение от пользователя (личка) → пересылаем в ГРУППУ ---
-    # (если сообщение пришло не из целевой группы, значит это личка)
     try:
         user = message.from_user
         username = f"@{user.username}" if user.username else "нет username"
@@ -261,7 +296,15 @@ async def handle_message(message: types.Message):
         await message.answer("✅ Сообщение отправлено в группу!")
     except Exception as e:
         logger.exception("❌ Ошибка при отправке в группу")
-        await message.answer("❌ Ошибка при отправке, попробуйте позже.")
+        # Пытаемся отправить пользователю более конкретное сообщение, но не раскрывая технических деталей
+        error_text = str(e)
+        if "chat not found" in error_text.lower():
+            user_msg = "❌ Группа не найдена. Проверьте CHANNEL_ID."
+        elif "forbidden" in error_text.lower():
+            user_msg = "❌ Бот не имеет прав для отправки сообщений в группу. Убедитесь, что он администратор."
+        else:
+            user_msg = "❌ Ошибка при отправке, попробуйте позже."
+        await message.answer(user_msg)
 
 # ========== HEALTH CHECK ДЛЯ RAILWAY ==========
 async def health_check(request):
