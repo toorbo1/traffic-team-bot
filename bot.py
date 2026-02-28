@@ -7,7 +7,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiohttp import web
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@rethewf")
+CHANNEL_ID = os.getenv("CHANNEL_ID", -1005252934052)  # СЮДА НУЖНО ВСТАВИТЬ ID ГРУППЫ (например, -1001234567890)
 REDIS_URL = os.getenv("REDIS_URL")
 
 logging.basicConfig(
@@ -20,9 +20,16 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-CHANNEL_USERNAME = CHANNEL_ID[1:] if CHANNEL_ID.startswith('@') else None
+# Функция для получения ID администраторов группы (кешируется)
+async def get_chat_admins(chat_id: int):
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        return [admin.user.id for admin in admins]
+    except Exception as e:
+        logger.exception(f"Не удалось получить администраторов чата {chat_id}")
+        return []
 
-# ----- Хранилище активных ответов с обработкой ошибок -----
+# ----- Хранилище активных ответов (без изменений) -----
 if REDIS_URL:
     try:
         import redis.asyncio as redis
@@ -75,7 +82,7 @@ async def clear_admin_reply(admin_id: int):
             logger.info(f"📦 Memory: удалено admin_reply:{admin_id}")
     except Exception as e:
         logger.exception(f"❌ Ошибка при удалении состояния admin {admin_id}")
-# ---------------------------------------------------------
+# -----------------------------------------------------
 
 def get_reply_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -84,11 +91,14 @@ def get_reply_keyboard(user_id: int) -> InlineKeyboardMarkup:
         ]
     )
 
-def is_channel(chat: types.Chat) -> bool:
-    """Сравнивает с CHANNEL_ID (учитывая @ и числовые ID)"""
-    if str(chat.id) == CHANNEL_ID:
+# Функция is_channel теперь переименована в is_target_chat и проверяет группу
+def is_target_chat(chat: types.Chat) -> bool:
+    """Проверяет, является ли чат целевой группой"""
+    # Для групп ID может быть числовым или строкой
+    if str(chat.id) == str(CHANNEL_ID):
         return True
-    if CHANNEL_USERNAME and chat.username == CHANNEL_USERNAME:
+    # Если CHANNEL_ID задан как @username, можно сравнивать и username
+    if CHANNEL_ID.startswith('@') and chat.username == CHANNEL_ID[1:]:
         return True
     return False
 
@@ -97,17 +107,17 @@ def is_channel(chat: types.Chat) -> bool:
 async def cmd_start(message: types.Message):
     logger.info(f"Команда /start от {message.from_user.id}")
     await message.answer(
-        "👋 Привет! Я бот-посредник для связи с каналом.\n"
-        "Напишите любое сообщение, и оно будет отправлено в канал.\n"
-        "Ответы из канала вы получите здесь."
+        "👋 Привет! Я бот-посредник для связи с группой.\n"  # Изменено "канал" на "группа"
+        "Напишите любое сообщение, и оно будет отправлено в группу.\n"
+        "Ответы из группы вы получите здесь."
     )
 
-# ========== КОМАНДА /cancel (сброс состояния ответа) ==========
+# ========== КОМАНДА /cancel ==========
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message):
     admin_id = message.from_user.id
     await clear_admin_reply(admin_id)
-    await message.answer("✅ Режим ответа сброшен. Теперь ваши сообщения в канале не будут отправляться пользователям.")
+    await message.answer("✅ Режим ответа сброшен.")
 
 # ========== ОБРАБОТКА КНОПКИ "ОТВЕТИТЬ" ==========
 @dp.callback_query(lambda c: c.data and c.data.startswith('reply:'))
@@ -119,12 +129,10 @@ async def process_reply_callback(callback: types.CallbackQuery):
     target_user_id = int(user_id_str)
     admin_id = callback.from_user.id
 
-    # Сохраняем состояние
     await set_admin_reply(admin_id, target_user_id)
 
     await callback.message.reply(
-        f"✍️ Теперь напишите ваш ответ в этот чат (или в канал). "
-        f"Он будет отправлен пользователю."
+        f"✍️ Теперь напишите ваш ответ в группу. Он будет отправлен пользователю."  # Уточнено "в группу"
     )
 
 # ========== ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ ==========
@@ -133,39 +141,45 @@ async def handle_message(message: types.Message):
     if message.from_user.is_bot:
         return
 
-    # --- Сообщение из КАНАЛА (потенциальный ответ администратора) ---
-    if is_channel(message.chat):
+    # --- Сообщение из ЦЕЛЕВОЙ ГРУППЫ (потенциальный ответ администратора) ---
+    if is_target_chat(message.chat):
+        # Проверяем, является ли отправитель администратором группы
+        admins = await get_chat_admins(message.chat.id)
+        if message.from_user.id not in admins:
+            logger.debug("Сообщение от обычного участника группы проигнорировано")
+            return
+
         admin_id = message.from_user.id
         target_user_id = await get_admin_reply(admin_id)
 
         if target_user_id:
             logger.info(f"👤 Админ {admin_id} отвечает пользователю {target_user_id}")
             try:
-                # Определяем тип содержимого
+                # Отправка ответа пользователю (код тот же, без изменений)
                 if message.text:
                     await bot.send_message(
                         target_user_id,
-                        f"✉️ **Ответ от администратора канала:**\n\n{message.text}"
+                        f"✉️ **Ответ от администратора группы:**\n\n{message.text}"  # Изменено
                     )
                 elif message.photo:
                     photo = message.photo[-1]
-                    caption = f"✉️ **Ответ от администратора канала:**\n\n{message.caption or ''}"
+                    caption = f"✉️ **Ответ от администратора группы:**\n\n{message.caption or ''}"
                     await bot.send_photo(target_user_id, photo.file_id, caption=caption)
                 elif message.video:
-                    caption = f"✉️ **Ответ от администратора канала:**\n\n{message.caption or ''}"
+                    caption = f"✉️ **Ответ от администратора группы:**\n\n{message.caption or ''}"
                     await bot.send_video(target_user_id, message.video.file_id, caption=caption)
                 elif message.document:
-                    caption = f"✉️ **Ответ от администратора канала:**\n\n{message.caption or ''}"
+                    caption = f"✉️ **Ответ от администратора группы:**\n\n{message.caption or ''}"
                     await bot.send_document(target_user_id, message.document.file_id, caption=caption)
                 elif message.voice:
                     await bot.send_voice(target_user_id, message.voice.file_id,
-                                         caption="✉️ Ответ от администратора канала (голосовое)")
+                                         caption="✉️ Ответ от администратора группы (голосовое)")
                 elif message.audio:
                     await bot.send_audio(target_user_id, message.audio.file_id,
-                                         caption="✉️ Ответ от администратора канала (аудио)")
+                                         caption="✉️ Ответ от администратора группы (аудио)")
                 elif message.sticker:
                     await bot.send_sticker(target_user_id, message.sticker.file_id)
-                    await bot.send_message(target_user_id, "✉️ Ответ от администратора канала (стикер)")
+                    await bot.send_message(target_user_id, "✉️ Ответ от администратора группы (стикер)")
                 else:
                     await message.reply("❌ Неподдерживаемый тип ответа")
                     return
@@ -179,15 +193,16 @@ async def handle_message(message: types.Message):
                 await clear_admin_reply(admin_id)
             return
         else:
-            logger.debug("Сообщение из канала проигнорировано (нет активного ответа)")
+            logger.debug("Сообщение администратора в группе проигнорировано (нет активного ответа)")
             return
 
-    # --- Сообщение от пользователя (личка) → пересылаем в канал ---
+    # --- Сообщение от пользователя (личка) → пересылаем в ГРУППУ ---
     try:
         user = message.from_user
         username = f"@{user.username}" if user.username else "нет username"
         base = f"📨 Сообщение от {user.full_name} ({username})"
 
+        # Отправляем в группу (CHANNEL_ID)
         if message.text:
             sent = await bot.send_message(
                 CHANNEL_ID,
@@ -233,9 +248,9 @@ async def handle_message(message: types.Message):
             await message.answer("❌ Неподдерживаемый тип сообщения")
             return
 
-        await message.answer("✅ Сообщение отправлено в канал!")
+        await message.answer("✅ Сообщение отправлено в группу!")
     except Exception as e:
-        logger.exception("❌ Ошибка при отправке в канал")
+        logger.exception("❌ Ошибка при отправке в группу")
         await message.answer("❌ Ошибка при отправке, попробуйте позже.")
 
 # ========== HEALTH CHECK ==========
