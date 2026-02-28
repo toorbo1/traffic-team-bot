@@ -3,7 +3,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiohttp import web
 
 # ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
@@ -100,11 +100,9 @@ def get_reply_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 def is_target_chat(chat: types.Chat) -> bool:
     """Проверяет, является ли чат целевой группой (по ID или username)"""
-    # Приводим CHANNEL_ID к строке для сравнения
     target = str(CHANNEL_ID)
     if str(chat.id) == target:
         return True
-    # Если CHANNEL_ID задан как @username
     if target.startswith('@') and chat.username == target[1:]:
         return True
     return False
@@ -124,10 +122,20 @@ async def get_chat_admins(chat_id: int):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     logger.info(f"Команда /start от {message.from_user.id}")
+    # Создаём reply-клавиатуру с двумя кнопками
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📢 Написать об продвижении")],
+            [KeyboardButton(text="❓ Помощь")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False  # Клавиатура остаётся всегда видимой
+    )
     await message.answer(
         "👋 Привет! Я бот-посредник для связи с группой.\n"
-        "Напишите любое сообщение, и оно будет отправлено в группу.\n"
-        "Ответы из группы вы получите здесь."
+        "Напишите сообщение об продвижении, и оно будет отправлено в группу.\n"
+        "Ответы из группы вы получите здесь.",
+        reply_markup=keyboard
     )
 
 # ========== КОМАНДА /cancel ==========
@@ -146,7 +154,6 @@ async def cmd_debug(message: types.Message):
         return
 
     try:
-        # Пытаемся получить информацию о чате
         chat = await bot.get_chat(CHANNEL_ID)
         bot_member = await chat.get_member(bot.id)
         status = "✅ Бот является администратором" if bot_member.status == "administrator" else f"❌ Статус бота: {bot_member.status}"
@@ -177,6 +184,27 @@ async def process_reply_callback(callback: types.CallbackQuery):
         f"✍️ Теперь напишите ваш ответ в группу. Он будет отправлен пользователю."
     )
 
+# ========== ОБРАБОТЧИКИ ДЛЯ КНОПОК ИЗ REPLY-КЛАВИАТУРЫ ==========
+@dp.message(lambda message: message.text == "📢 Написать об продвижении")
+async def handle_promo(message: types.Message):
+    logger.info(f"Пользователь {message.from_user.id} выбрал 'Написать об продвижении'")
+    await message.answer(
+        "📝 Отправьте ваше сообщение об продвижении. Оно будет передано администраторам группы."
+    )
+
+@dp.message(lambda message: message.text == "❓ Помощь")
+async def handle_help(message: types.Message):
+    logger.info(f"Пользователь {message.from_user.id} запросил помощь")
+    help_text = (
+        "🆘 **Помощь**\n\n"
+        "Этот бот позволяет отправить сообщение администраторам группы.\n"
+        "• Нажмите 'Написать об продвижении' и отправьте ваше сообщение.\n"
+        "• Администраторы ответят вам в этом чате.\n"
+        "• Если вы хотите отправить новое сообщение, просто напишите его.\n"
+        "• Команда /cancel используется только администраторами для сброса режима ответа."
+    )
+    await message.answer(help_text)
+
 # ========== ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ ==========
 @dp.message()
 async def handle_message(message: types.Message):
@@ -188,7 +216,6 @@ async def handle_message(message: types.Message):
     # --- Сообщение из ЦЕЛЕВОЙ ГРУППЫ (потенциальный ответ администратора) ---
     if is_target_chat(message.chat):
         logger.info("Сообщение из целевой группы")
-        # Проверяем, является ли отправитель администратором группы
         admins = await get_chat_admins(message.chat.id)
         if message.from_user.id not in admins:
             logger.debug("Сообщение от обычного участника группы проигнорировано")
@@ -200,7 +227,6 @@ async def handle_message(message: types.Message):
         if target_user_id:
             logger.info(f"👤 Админ {admin_id} отвечает пользователю {target_user_id}")
             try:
-                # Отправка ответа пользователю с поддержкой разных типов контента
                 if message.text:
                     await bot.send_message(
                         target_user_id,
@@ -247,7 +273,6 @@ async def handle_message(message: types.Message):
         username = f"@{user.username}" if user.username else "нет username"
         base = f"📨 Сообщение от {user.full_name} ({username})"
 
-        # Отправляем в группу (CHANNEL_ID)
         if message.text:
             await bot.send_message(
                 CHANNEL_ID,
@@ -296,7 +321,6 @@ async def handle_message(message: types.Message):
         await message.answer("✅ Сообщение отправлено в группу!")
     except Exception as e:
         logger.exception("❌ Ошибка при отправке в группу")
-        # Пытаемся отправить пользователю более конкретное сообщение, но не раскрывая технических деталей
         error_text = str(e)
         if "chat not found" in error_text.lower():
             user_msg = "❌ Группа не найдена. Проверьте CHANNEL_ID."
