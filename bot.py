@@ -4,19 +4,14 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.storage.redis import RedisStorage
 from aiohttp import web
 
 # ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@rethewf")
-REDIS_URL = os.getenv("REDIS_URL")  # если есть Redis на Railway
+REDIS_URL = os.getenv("REDIS_URL")          # опционально, для Redis на Railway
 # ========================================================
 
-# Логирование
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -24,27 +19,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Выбор хранилища для FSM
-if REDIS_URL:
-    storage = RedisStorage.from_url(REDIS_URL)
-    logger.info("✅ Используется Redis для хранения состояний")
-else:
-    storage = MemoryStorage()
-    logger.warning("⚠️ REDIS_URL не задан, состояния хранятся в памяти (будут сбрасываться при перезапуске)")
-
-# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=storage)
+dp = Dispatcher()
 
-# Для сравнения канала
+# Для сравнения канала (может быть числовой ID или юзернейм)
 CHANNEL_USERNAME = CHANNEL_ID[1:] if CHANNEL_ID.startswith('@') else None
 
-# Состояния FSM
-class AdminReply(StatesGroup):
-    waiting_for_reply = State()
+# ----- Хранилище активных ответов: { admin_id: target_user_id } -----
+if REDIS_URL:
+    import redis.asyncio as redis
+    redis_client = redis.from_url(REDIS_URL)
+    logger.info("✅ Используется Redis для хранения состояний ответов")
+else:
+    redis_client = None
+    active_replies = {}   # fallback в памяти
+    logger.warning("⚠️ REDIS_URL не задан, состояния хранятся в памяти (будут сброшены при перезапуске)")
 
-def get_reply_keyboard(user_id: int):
-    """Кнопка для ответа пользователю"""
+async def set_admin_reply(admin_id: int, user_id: int):
+    """Сохранить, что админ сейчас отвечает пользователю user_id"""
+    if redis_client:
+        await redis_client.set(f"admin_reply:{admin_id}", user_id, ex=3600)  # таймаут 1 час
+    else:
+        active_replies[admin_id] = user_id
+
+async def get_admin_reply(admin_id: int) -> int | None:
+    """Получить user_id, которому админ сейчас отвечает (или None)"""
+    if redis_client:
+        val = await redis_client.get(f"admin_reply:{admin_id}")
+        return int(val) if val else None
+    else:
+        return active_replies.get(admin_id)
+
+async def clear_admin_reply(admin_id: int):
+    """Очистить запись после ответа"""
+    if redis_client:
+        await redis_client.delete(f"admin_reply:{admin_id}")
+    else:
+        active_replies.pop(admin_id, None)
+# -------------------------------------------------------------------
+
+def get_reply_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Кнопка для ответа пользователю, прикрепляемая к сообщению в канале"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Ответить пользователю", callback_data=f"reply:{user_id}")]
@@ -52,7 +67,7 @@ def get_reply_keyboard(user_id: int):
     )
 
 def is_channel(chat: types.Chat) -> bool:
-    """Проверяет, является ли чат целевым каналом"""
+    """Проверяет, является ли чат целевым каналом (по ID или username)"""
     if str(chat.id) == CHANNEL_ID:
         return True
     if CHANNEL_USERNAME and chat.username == CHANNEL_USERNAME:
@@ -69,69 +84,90 @@ async def cmd_start(message: types.Message):
         "Ответы из канала вы получите здесь."
     )
 
-# ========== ОБРАБОТКА НАЖАТИЯ КНОПКИ "ОТВЕТИТЬ" ==========
+# ========== ОБРАБОТКА КНОПКИ "ОТВЕТИТЬ" ==========
 @dp.callback_query(lambda c: c.data and c.data.startswith('reply:'))
-async def process_reply_callback(callback: types.CallbackQuery, state: FSMContext):
+async def process_reply_callback(callback: types.CallbackQuery):
     logger.info(f"🔘 Получен callback: {callback.data} от {callback.from_user.id}")
     await callback.answer()
 
     _, user_id_str = callback.data.split(':')
     target_user_id = int(user_id_str)
+    admin_id = callback.from_user.id
 
-    # Сохраняем состояние для администратора
-    await state.set_state(AdminReply.waiting_for_reply)
-    await state.update_data(target_user_id=target_user_id)
-    logger.info(f"✅ Установлено состояние ожидания ответа для админа {callback.from_user.id} -> пользователь {target_user_id}")
+    # Сохраняем, что этот админ собирается ответить пользователю
+    await set_admin_reply(admin_id, target_user_id)
+    logger.info(f"✅ Админ {admin_id} будет отвечать пользователю {target_user_id}")
 
-    await callback.message.reply(f"✍️ Напишите ответ для пользователя (ID: {target_user_id})")
+    await callback.message.reply(
+        f"✍️ Теперь напишите ваш ответ в этот чат (или в канал). "
+        f"Он будет отправлен пользователю."
+    )
 
-# ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНИСТРАТОРА ==========
-@dp.message(AdminReply.waiting_for_reply)
-async def send_admin_reply(message: types.Message, state: FSMContext):
-    logger.info(f"📩 Получено сообщение от админа в состоянии: {message.text}")
-    data = await state.get_data()
-    target_user_id = data.get('target_user_id')
-
-    if not target_user_id:
-        logger.warning("❌ target_user_id не найден в состоянии")
-        await message.reply("❌ Ошибка: получатель не найден. Нажмите кнопку заново.")
-        await state.clear()
-        return
-
-    try:
-        # Отправляем ответ пользователю
-        await bot.send_message(
-            target_user_id,
-            f"✉️ **Ответ от администратора канала:**\n\n{message.text}"
-        )
-        logger.info(f"✅ Ответ отправлен пользователю {target_user_id}")
-        await message.reply("✅ Ответ отправлен пользователю!")
-    except Exception as e:
-        logger.exception(f"❌ Ошибка при отправке ответа пользователю {target_user_id}")
-        await message.reply(f"❌ Не удалось отправить ответ: {str(e)[:100]}")
-    finally:
-        await state.clear()
-        logger.info(f"🧹 Состояние очищено для админа {message.from_user.id}")
-
-# ========== ОБЩИЙ ОБРАБОТЧИК (ПЕРЕСЫЛКА СООБЩЕНИЙ В КАНАЛ) ==========
+# ========== ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ ==========
 @dp.message()
-async def forward_to_channel(message: types.Message):
-    logger.info(f"📨 Общий обработчик: сообщение от {message.from_user.id} в чате {message.chat.id}")
-
-    # Игнорируем сообщения из самого канала
-    if is_channel(message.chat):
-        logger.debug("🚫 Сообщение из канала проигнорировано (чтобы избежать зацикливания)")
-        return
-
+async def handle_message(message: types.Message):
+    # Игнорируем сообщения от самого бота
     if message.from_user.is_bot:
         return
+
+    # --- СЛУЧАЙ 1: Сообщение из КАНАЛА (потенциальный ответ администратора) ---
+    if is_channel(message.chat):
+        admin_id = message.from_user.id
+        target_user_id = await get_admin_reply(admin_id)
+
+        if target_user_id:
+            # Это ответ администратора конкретному пользователю
+            try:
+                # Определяем тип содержимого и отправляем пользователю
+                if message.text:
+                    await bot.send_message(
+                        target_user_id,
+                        f"✉️ **Ответ от администратора канала:**\n\n{message.text}"
+                    )
+                elif message.photo:
+                    photo = message.photo[-1]
+                    caption = f"✉️ **Ответ от администратора канала:**\n\n{message.caption or ''}"
+                    await bot.send_photo(target_user_id, photo.file_id, caption=caption)
+                elif message.video:
+                    caption = f"✉️ **Ответ от администратора канала:**\n\n{message.caption or ''}"
+                    await bot.send_video(target_user_id, message.video.file_id, caption=caption)
+                elif message.document:
+                    caption = f"✉️ **Ответ от администратора канала:**\n\n{message.caption or ''}"
+                    await bot.send_document(target_user_id, message.document.file_id, caption=caption)
+                elif message.voice:
+                    await bot.send_voice(target_user_id, message.voice.file_id,
+                                         caption="✉️ Ответ от администратора канала (голосовое)")
+                elif message.audio:
+                    await bot.send_audio(target_user_id, message.audio.file_id,
+                                         caption="✉️ Ответ от администратора канала (аудио)")
+                elif message.sticker:
+                    await bot.send_sticker(target_user_id, message.sticker.file_id)
+                    await bot.send_message(target_user_id, "✉️ Ответ от администратора канала (стикер)")
+                else:
+                    await message.reply("❌ Неподдерживаемый тип ответа")
+                    return
+
+                logger.info(f"✅ Ответ отправлен пользователю {target_user_id} от админа {admin_id}")
+                await message.reply("✅ Ответ отправлен пользователю!")
+            except Exception as e:
+                logger.exception("Ошибка при отправке ответа пользователю")
+                await message.reply(f"❌ Не удалось отправить ответ: {str(e)[:100]}")
+            finally:
+                await clear_admin_reply(admin_id)
+            return
+        else:
+            # Сообщение из канала, но не от админа с активным ответом – игнорируем, чтобы не зациклиться
+            logger.debug("Сообщение из канала проигнорировано (не ответ)")
+            return
+
+    # --- СЛУЧАЙ 2: Сообщение от пользователя (личка) → пересылаем в канал ---
+    # (если сообщение пришло не из канала, значит это личка или группа, но мы обрабатываем как пользовательское)
 
     try:
         user = message.from_user
         username = f"@{user.username}" if user.username else "нет username"
         base = f"📨 Сообщение от {user.full_name} ({username})"
 
-        # Определяем тип контента и отправляем в канал с кнопкой
         if message.text:
             sent = await bot.send_message(
                 CHANNEL_ID,
@@ -179,7 +215,7 @@ async def forward_to_channel(message: types.Message):
 
         await message.answer("✅ Сообщение отправлено в канал!")
     except Exception as e:
-        logger.exception("❌ Ошибка при отправке в канал")
+        logger.exception("Ошибка при отправке в канал")
         await message.answer("❌ Ошибка при отправке, попробуйте позже.")
 
 # ========== ВЕБ-СЕРВЕР ДЛЯ HEALTH CHECK (RAILWAY) ==========
@@ -194,7 +230,7 @@ async def start_web_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info(f"Web server started on port {port}")
+    logger.info(f"🌐 Web server started on port {port}")
 
 # ========== ЗАПУСК БОТА ==========
 async def main():
