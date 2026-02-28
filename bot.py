@@ -9,7 +9,7 @@ from aiohttp import web
 # ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # CHANNEL_ID может быть числовым ID (например, -1001234567890) или юзернеймом (@example)
-RAW_CHANNEL_ID = os.getenv("CHANNEL_ID", "-1005252934052")  # по умолчанию ваш ID как строка
+RAW_CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003810467733")  # по умолчанию ваш ID как строка
 REDIS_URL = os.getenv("REDIS_URL")
 # ========================================================
 
