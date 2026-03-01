@@ -137,7 +137,7 @@ async def cmd_start(message: types.Message):
     await message.answer_video(
         video=video,
         caption=(
-            "🚀 Добро пожаловать в Nexora Digital!\n\n"
+            "🚀 Добро пожаловать в Apex Digital!\n\n"
             "Мы — digital-агентство, которое помогает бизнесу системно привлекать клиентов "
             "и превращать трафик в реальные продажи.\n\n"
             "🔹 Разрабатываем современные продающие сайты\n"
@@ -151,7 +151,7 @@ async def cmd_start(message: types.Message):
             "— Чем занимается ваш бизнес\n"
             "— Что именно хотите продвигать\n"
             "— Есть ли уже сайт или реклама\n\n"
-            "По всем вопросам: @nexora333\n"
+            "По всем вопросам: @apex333\n"
             "Готовы начать? Выберите действие ниже 👇"
         ),
         reply_markup=keyboard
@@ -222,7 +222,7 @@ async def handle_help(message: types.Message):
     "• Нажмите '📢 Оставить заявку'\n"
     "• Опишите ваш проект\n"
     "• Мы ответим вам в этом чате\n\n"
-    "Если возникли вопросы — @nexora333."
+    "Если возникли вопросы — @apex333."
 )
     await message.answer(help_text)
 
