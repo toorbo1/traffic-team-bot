@@ -254,27 +254,27 @@ async def handle_message(message: types.Message):
                 if message.text:
                     await bot.send_message(
                         target_user_id,
-                        f"✉️ **Ответ от администратора группы:**\n\n{message.text}"
+                        f"✉️ Ответ от администратора:\n\n{message.text}"
                     )
                 elif message.photo:
                     photo = message.photo[-1]
-                    caption = f"✉️ **Ответ от администратора группы:**\n\n{message.caption or ''}"
+                    caption = f"✉️ Ответ от администратора:\n\n{message.caption or ''}"
                     await bot.send_photo(target_user_id, photo.file_id, caption=caption)
                 elif message.video:
-                    caption = f"✉️ **Ответ от администратора группы:**\n\n{message.caption or ''}"
+                    caption = f"✉️ Ответ от администратора:\n\n{message.caption or ''}"
                     await bot.send_video(target_user_id, message.video.file_id, caption=caption)
                 elif message.document:
-                    caption = f"✉️ **Ответ от администратора группы:**\n\n{message.caption or ''}"
+                    caption = f"✉️ Ответ от администратора:\n\n{message.caption or ''}"
                     await bot.send_document(target_user_id, message.document.file_id, caption=caption)
                 elif message.voice:
                     await bot.send_voice(target_user_id, message.voice.file_id,
-                                         caption="✉️ Ответ от администратора группы (голосовое)")
+                                         caption="✉️ Ответ от администратора (голосовое)")
                 elif message.audio:
                     await bot.send_audio(target_user_id, message.audio.file_id,
-                                         caption="✉️ Ответ от администратора группы (аудио)")
+                                         caption="✉️ Ответ от администратора (аудио)")
                 elif message.sticker:
                     await bot.send_sticker(target_user_id, message.sticker.file_id)
-                    await bot.send_message(target_user_id, "✉️ Ответ от администратора группы (стикер)")
+                    await bot.send_message(target_user_id, "✉️ Ответ от администратора (стикер)")
                 else:
                     await message.reply("❌ Неподдерживаемый тип ответа")
                     return
@@ -342,7 +342,7 @@ async def handle_message(message: types.Message):
             await message.answer("❌ Неподдерживаемый тип сообщения")
             return
 
-        await message.answer("✅ Сообщение отправлено в группу!")
+        await message.answer("✅ Заявка отправлена на рассмотрение. Мы свяжемся с вами в ближайшее время.")
     except Exception as e:
         logger.exception("❌ Ошибка при отправке в группу")
         error_text = str(e)
