@@ -132,7 +132,7 @@ async def cmd_start(message: types.Message):
         one_time_keyboard=False
     )
 
-    video = FSInputFile("video (3).mp4")
+    video = FSInputFile("video (3) (1).mp4")
 
     await message.answer_video(
         video=video,
