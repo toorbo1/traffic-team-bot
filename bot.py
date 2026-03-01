@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiohttp import web
-
+from aiogram.types import FSInputFile
 # ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # CHANNEL_ID может быть числовым ID (например, -1001234567890) или юзернеймом (@example)
@@ -122,19 +122,28 @@ async def get_chat_admins(chat_id: int):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     logger.info(f"Команда /start от {message.from_user.id}")
-    # Создаём reply-клавиатуру с двумя кнопками
+
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📢 Написать об продвижении")],
+            [KeyboardButton(text="📢 Оставить заявку")],
             [KeyboardButton(text="❓ Помощь")]
         ],
         resize_keyboard=True,
-        one_time_keyboard=False  # Клавиатура остаётся всегда видимой
+        one_time_keyboard=False
     )
-    await message.answer(
-        "👋 Привет! Я бот-посредник для связи с группой.\n"
-        "Напишите сообщение об продвижении, и оно будет отправлено в группу.\n"
-        "Ответы из группы вы получите здесь.",
+
+    photo = FSInputFile("Логотип NEXORA DIGITAL на черном фоне.png")
+
+    await message.answer_photo(
+        photo=photo,
+        caption=(
+            "🚀 Добро пожаловать в Nexora Digital!\n\n"
+            "Мы помогаем бизнесу привлекать клиентов через системный маркетинг:\n"
+            "• Создаём продающие сайты\n"
+            "• Запускаем таргетированную рекламу\n"
+            "• Выстраиваем стратегию и воронки продаж\n\n"
+            "Опишите ваш проект и мы свяжемся с вами 👇"
+        ),
         reply_markup=keyboard
     )
 
@@ -185,7 +194,7 @@ async def process_reply_callback(callback: types.CallbackQuery):
     )
 
 # ========== ОБРАБОТЧИКИ ДЛЯ КНОПОК ИЗ REPLY-КЛАВИАТУРЫ ==========
-@dp.message(lambda message: message.text == "📢 Написать об продвижении")
+@dp.message(lambda message: message.text == "📢 Оставить заявку")
 async def handle_promo(message: types.Message):
     logger.info(f"Пользователь {message.from_user.id} выбрал 'Написать об продвижении'")
     await message.answer(
@@ -196,13 +205,14 @@ async def handle_promo(message: types.Message):
 async def handle_help(message: types.Message):
     logger.info(f"Пользователь {message.from_user.id} запросил помощь")
     help_text = (
-        "🆘 **Помощь**\n\n"
-        "Этот бот позволяет отправить сообщение администраторам группы.\n"
-        "• Нажмите 'Написать об продвижении' и отправьте ваше сообщение.\n"
-        "• Администраторы ответят вам в этом чате.\n"
-        "• Если вы хотите отправить новое сообщение, просто напишите его.\n"
-        "• Команда /cancel используется только администраторами для сброса режима ответа."
-    )
+    "🆘 **Помощь**\n\n"
+    "Этот бот создан для приёма заявок на рекламу и сотрудничество.\n\n"
+    "Как это работает:\n"
+    "• Нажмите '📢 Оставить заявку'\n"
+    "• Опишите ваш проект\n"
+    "• Мы ответим вам в этом чате\n\n"
+    "Если возникли вопросы — просто напишите сообщение."
+)
     await message.answer(help_text)
 
 # ========== ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ ==========
