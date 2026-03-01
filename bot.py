@@ -132,7 +132,7 @@ async def cmd_start(message: types.Message):
         one_time_keyboard=False
     )
 
-    photo = FSInputFile("Логотип NEXORA DIGITAL на черном фоне.png")
+    photo = FSInputFile("Логотип NEXORA DIGITAL на черном фоне1.png")
 
     await message.answer_photo(
         photo=photo,
